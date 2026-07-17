@@ -5,7 +5,8 @@ Currently in **Phase 0**: recording and reverse-engineering Claude Code's wire
 behavior via [ai-agent-profiler](https://github.com/anomalyco/ai-agent-profiler).
 
 See [docs/PLAN.md](docs/PLAN.md) for the full plan, feature verdict table, and
-phase breakdown, and [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for the
+phase breakdown, [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for the
 complete implementation reference (architecture, invariants, formats, TTY
-lessons). Protocol findings land in `docs/protocol/`; golden traces in
-`fixtures/traces/`.
+lessons), and [docs/CHANGELOG.md](docs/CHANGELOG.md) for the chronological
+record of what has been built and verified. Protocol findings land in
+`docs/protocol/`; golden traces in `fixtures/traces/`.

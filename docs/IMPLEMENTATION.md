@@ -1,7 +1,8 @@
 # stackpilot — Implementation Reference
 
-Accurate as of `v0.1` + TUI/clack commits (`91ea9a4`) with P2a caching in
-progress. Companion docs: [PLAN.md](PLAN.md) (roadmap, feature verdicts) and
+Accurate as of P2a (`1d9e8f5`): caching + cache ledger landed. Companion
+docs: [PLAN.md](PLAN.md) (roadmap, feature verdicts),
+[CHANGELOG.md](CHANGELOG.md) (chronological record with evidence), and
 [protocol/](protocol/) (recorded Claude Code wire behavior this design is
 based on).
 
@@ -202,9 +203,15 @@ predicted-regen | unexpected-regen` (last = stable prefix but server
    length — Haiku's minimum is thousands of tokens, so trivial sessions
    may legitimately never cache).
 
-**Wiring status:** `cache.ts` complete; `loop.ts` imports it but request
-build, `TurnDeps.ledger`, stats surfacing, and tests are not landed.
-Until then requests carry no breakpoints and stats show `cache 0r/0w`.
+**Wiring status: LANDED (`1d9e8f5`).** `runTurn` builds every request via
+`applyCacheControl`; `TurnDeps.ledger` (owned by the caller so it spans
+turns — created in `runApp` and in `main()`) predicts before each request
+and reconciles after; verdict notes land in `TurnStats.notes` and render
+as `⚠` lines under the stats line, which shows cache r/w + hit rate.
+Live-verified through the proxy: turn 1 `cache 0r/8516w` with the
+below-minimum warning firing correctly, turn 2
+`3 in · cache 8516r/59w (99% cached)`; wire trace showed breakpoints at
+`system[0]` + last message block.
 
 Known limits: ledger is in-memory per process (restart → first prediction
 "unknown", verification re-syncs); server cache state is inferred, never
@@ -343,17 +350,17 @@ cost-verified against Claude Code baselines (`aap compare` for A/B in P3).
 
 ## 10. Testing
 
-`vitest`, 43 tests green at last commit. Philosophy: pure logic gets
+`vitest`, 55 tests green at last commit. Philosophy: pure logic gets
 tests; thin I/O shells get live tmux verification instead.
 
-| Suite             | Anchors                                                                                                                       |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `reducer.test.ts` | **golden fixture**: real Claude rewind transcript → exact tree numbers; synthetic linear/rewind/metadata cases                |
-| `loop.test.ts`    | tool_result backfill on aborted permission; tool_use/tool_result pairing on the happy path (fake streams, temp-home stores)   |
-| `tools.test.ts`   | Read numbering/offset; Edit unique-match/ambiguous/replace_all/missing; globToRegExp table                                    |
-| `store.test.ts`   | summariesFor ordering + previews (utimes-controlled); firstUserText string/block/tool_result-skip/null                        |
-| `render.test.ts`  | tool lines, stats cache visibility, usage summing, permissionLabel, formatAge table                                           |
-| (pending, P2a)    | cache marker placement; stripCacheControl; fingerprint diff cases; ledger verdicts; **two-turn byte-stable prefix invariant** |
+| Suite             | Anchors                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reducer.test.ts` | **golden fixture**: real Claude rewind transcript → exact tree numbers; synthetic linear/rewind/metadata cases                                                          |
+| `loop.test.ts`    | tool_result backfill on aborted permission; tool_use/tool_result pairing on the happy path (fake streams, temp-home stores)                                             |
+| `tools.test.ts`   | Read numbering/offset; Edit unique-match/ambiguous/replace_all/missing; globToRegExp table                                                                              |
+| `store.test.ts`   | summariesFor ordering + previews (utimes-controlled); firstUserText string/block/tool_result-skip/null                                                                  |
+| `render.test.ts`  | tool lines, stats cache visibility + hit %, usage summing, permissionLabel, formatAge table                                                                             |
+| `cache.test.ts`   | marker placement; stripCacheControl; fingerprint diffs (incl. marker movement ≠ divergence); ledger verdicts; **two-turn byte-stable prefix invariant through runTurn** |
 
 Live verification pattern: tmux `send-keys`/`capture-pane` against a real
 TTY (the pty quirks in §7.3 are invisible to piped tests), with traffic

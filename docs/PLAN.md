@@ -74,9 +74,12 @@ control + cost routing — not on feature count.
 - **P1.5 TUI — DONE (pulled forward from P5):** custom inline TUI +
   @clack/prompts widgets: permission select with session allowlist,
   -c session picker, Esc interrupt, spinner, slash commands.
-- **P2 — NEXT:** cache_control breakpoints + append-only prefix discipline
-  (byte-stable prefix test) + live cost meter (pricing TOML) + /compact
-  then auto-compact. Golden-trace replay tests.
+- **P2a caching — DONE:** cache_control breakpoints (static + moving),
+  client-side fingerprint ledger predicting/verifying hits and regens,
+  hit-rate in the stats line, byte-stable prefix invariant test.
+  Live: 99% cached on turn 2 of the verification session.
+- **P2b — NEXT:** pricing config + $ cost meter; /compact then
+  auto-compact. Golden-trace replay tests.
 - **P3:** context policies (#10 tool-result paging, #11 read dedupe,
   #12 stack eviction) + cheap-model routing + A/B via aap compare.
 - **P4:** subagents (Task).
