@@ -19,7 +19,9 @@ import {
   usageSummary,
 } from "./render.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
+import { runCompact } from "../core/compact.js";
 import { CacheLedger } from "../core/cache.js";
+import { formatUsd } from "../core/cost.js";
 import type { ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
@@ -32,6 +34,8 @@ export interface AppDeps {
   config: TransportConfig;
   system: string;
   pricing?: Record<string, ModelPricing>;
+  // 0 disables auto-compaction.
+  autoCompactAtTokens?: number;
 }
 
 class Spinner {
@@ -116,6 +120,7 @@ function isAbort(err: unknown): boolean {
 
 export async function runApp(deps: AppDeps): Promise<void> {
   const { store, registry, config, system, pricing } = deps;
+  const autoCompactAtTokens = deps.autoCompactAtTokens ?? 0;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const spinner = new Spinner();
   const interrupt = new InterruptController();
@@ -176,6 +181,44 @@ export async function runApp(deps: AppDeps): Promise<void> {
 
   console.log(banner(config.model, store.sessionId, process.cwd()));
 
+  async function doCompact(reason: "manual" | "auto"): Promise<void> {
+    interrupt.reset();
+    interrupt.arm();
+    spinner.start("compacting…");
+    try {
+      const res = await runCompact({
+        store,
+        registry,
+        config,
+        system,
+        ledger,
+        pricing,
+        signal: interrupt.signal,
+        stream: streamMessage,
+      });
+      spinner.stop();
+      if (!res) {
+        console.log(dim("nothing to compact"));
+        return;
+      }
+      const cost = res.costUsd !== null ? ` · ${formatUsd(res.costUsd)}` : "";
+      console.log(
+        dim(
+          `✂ compacted (${reason}): ${res.droppedMessages} messages → ${res.summaryChars}-char summary${cost}`,
+        ),
+      );
+    } catch (err) {
+      spinner.stop();
+      if (isAbort(err)) {
+        console.log(interrupted());
+        return;
+      }
+      throw err;
+    } finally {
+      interrupt.disarm();
+    }
+  }
+
   for (;;) {
     let line: string;
     try {
@@ -191,6 +234,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
       else if (line === "/todos")
         console.log(todoBox(registry.todoState.todos));
       else if (line === "/usage") console.log(usageSummary(turns));
+      else if (line === "/compact") await doCompact("manual");
       else console.log(dim(`unknown command: ${line} (try /help)`));
       continue;
     }
@@ -219,6 +263,17 @@ export async function runApp(deps: AppDeps): Promise<void> {
       process.stdout.write(`\n\n${statsLine(stats)}\n`);
       for (const note of stats.notes) {
         process.stdout.write(`${dim(`⚠ ${note}`)}\n`);
+      }
+      if (
+        autoCompactAtTokens > 0 &&
+        stats.lastRequestInputTokens >= autoCompactAtTokens
+      ) {
+        console.log(
+          dim(
+            `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactAtTokens} threshold — auto-compacting`,
+          ),
+        );
+        await doCompact("auto");
       }
     } catch (err) {
       spinner.stop();

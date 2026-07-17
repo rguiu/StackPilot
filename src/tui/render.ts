@@ -19,7 +19,8 @@ export function helpText(): string {
   return [
     "/help          this help",
     "/todos         show the session todo list",
-    "/usage         cumulative token usage this session",
+    "/usage         cumulative tokens + cost this session",
+    "/compact       summarize the conversation, restart the stack from it",
     "/exit          quit",
   ].join("\n");
 }

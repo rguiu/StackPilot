@@ -167,7 +167,14 @@ export async function main(): Promise<void> {
   }
 
   if (process.stdin.isTTY && process.stdout.isTTY) {
-    await runApp({ store, registry, config, system, pricing });
+    await runApp({
+      store,
+      registry,
+      config,
+      system,
+      pricing,
+      autoCompactAtTokens: appConfig.autoCompactAtTokens,
+    });
     return;
   }
 

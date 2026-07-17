@@ -80,4 +80,30 @@ describe("reduce on synthetic trees", () => {
     expect(r.stats.chainedEvents).toBe(2);
     expect(r.stats.activePathEvents).toBe(2);
   });
+
+  it("restarts messages at a compact summary", () => {
+    const summary: SessionEvent = {
+      ...ev("s", "b"),
+      isCompactSummary: true,
+      message: { role: "user", content: "SUMMARY" },
+    };
+    const r = reduce([ev("a", null), ev("b", "a"), summary, ev("c", "s")]);
+    expect(r.stats.activePathEvents).toBe(4); // tree unaffected
+    expect(r.messages.map((m) => m.content)).toEqual(["SUMMARY", "c"]);
+  });
+
+  it("uses only the LAST compact summary", () => {
+    const s1: SessionEvent = {
+      ...ev("s1", "a"),
+      isCompactSummary: true,
+      message: { role: "user", content: "FIRST" },
+    };
+    const s2: SessionEvent = {
+      ...ev("s2", "s1"),
+      isCompactSummary: true,
+      message: { role: "user", content: "SECOND" },
+    };
+    const r = reduce([ev("a", null), s1, s2, ev("z", "s2")]);
+    expect(r.messages.map((m) => m.content)).toEqual(["SECOND", "z"]);
+  });
 });

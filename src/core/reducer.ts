@@ -72,6 +72,9 @@ export function reduce(events: readonly SessionEvent[]): ReducedSession {
   const messages: ApiMessage[] = [];
   for (const e of path) {
     if ((e.type === "user" || e.type === "assistant") && e.message) {
+      // A compact summary supersedes everything before it: the API-visible
+      // conversation restarts at the summary (older events stay on disk).
+      if (e.isCompactSummary === true) messages.length = 0;
       messages.push({
         role: e.message.role ?? (e.type as "user" | "assistant"),
         content: e.message.content,
