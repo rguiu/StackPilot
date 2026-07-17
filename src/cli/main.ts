@@ -9,6 +9,7 @@
 
 import { createInterface, type Interface } from "node:readline/promises";
 import process from "node:process";
+import { isCancel, select } from "@clack/prompts";
 import { resolveConfig, ConfigError } from "../config.js";
 import { buildSystemPrompt } from "../core/prompt.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
@@ -17,6 +18,7 @@ import { SessionStore } from "../session/store.js";
 import { createRegistry } from "../tools/index.js";
 import { streamMessage } from "../transport/anthropic.js";
 import { runApp } from "../tui/app.js";
+import { formatAge, permissionPromptPlain } from "../tui/render.js";
 
 interface CliArgs {
   prompt?: string;
@@ -55,6 +57,33 @@ function openStore(cwd: string, continue_: boolean): SessionStore {
   return SessionStore.create(cwd);
 }
 
+// Interactive -c with several sessions: arrow-key picker. Cancel exits.
+async function pickSession(cwd: string): Promise<SessionStore> {
+  const summaries = SessionStore.summariesFor(cwd);
+  if (summaries.length === 0) {
+    console.error("no previous session here — starting fresh");
+    return SessionStore.create(cwd);
+  }
+  if (summaries.length === 1) return SessionStore.open(summaries[0]!.path);
+
+  const now = Date.now();
+  const choice = await select({
+    message: "Resume which session?",
+    options: summaries.slice(0, 10).map((s) => ({
+      value: s.path,
+      label: `${s.id.slice(0, 8)} · ${formatAge(now - s.mtimeMs)} · ${(s.preview ?? "(no prompt)").slice(0, 50)}`,
+    })),
+  });
+  if (isCancel(choice)) {
+    console.error("cancelled");
+    process.exit(0);
+  }
+  const store = SessionStore.open(choice);
+  const n = reduce(store.all()).messages.length;
+  console.error(`resumed ${store.sessionId} (${n} messages)`);
+  return store;
+}
+
 function makeIO(rl: Interface | null, yolo: boolean): TurnIO {
   return {
     onText: (d) => process.stdout.write(d),
@@ -71,14 +100,9 @@ function makeIO(rl: Interface | null, yolo: boolean): TurnIO {
     permit: async (name, input) => {
       if (yolo) return true;
       if (!rl) return false; // headless without --yolo: deny mutations
-      const preview =
-        name === "Bash"
-          ? String(input.command ?? "")
-          : String(input.file_path ?? "");
-      const answer = await rl.question(
-        `allow ${name}(${preview.slice(0, 80)})? [y/N] `,
-      );
-      return answer.trim().toLowerCase().startsWith("y");
+      const answer = await rl.question(permissionPromptPlain(name, input));
+      const norm = answer.trim().toLowerCase();
+      return norm === "y" || norm === "yes";
     },
   };
 }
@@ -104,7 +128,14 @@ export async function main(): Promise<void> {
   }
 
   const cwd = process.cwd();
-  const store = openStore(cwd, args.continue_ || args.prompt !== undefined);
+  const interactiveTty =
+    process.stdin.isTTY === true && process.stdout.isTTY === true;
+  // -p starts fresh unless -c is given (matches the documented contract; a
+  // bare -p silently resuming the newest session was a P1 bug).
+  const store =
+    args.continue_ && args.prompt === undefined && interactiveTty
+      ? await pickSession(cwd)
+      : openStore(cwd, args.continue_);
   const registry = createRegistry();
   const system = buildSystemPrompt(cwd);
 

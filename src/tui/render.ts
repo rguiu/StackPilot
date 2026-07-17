@@ -23,11 +23,8 @@ export function helpText(): string {
   ].join("\n");
 }
 
-// One-line summary of a tool invocation, e.g.  ⏺ Bash(npm test)
-export function toolStartLine(
-  name: string,
-  input: Record<string, unknown>,
-): string {
+// The most human-relevant argument of a tool call, for one-line previews.
+export function toolArgPreview(input: Record<string, unknown>): string {
   const arg =
     typeof input.command === "string"
       ? input.command
@@ -36,8 +33,34 @@ export function toolStartLine(
         : typeof input.pattern === "string"
           ? input.pattern
           : "";
-  const shown = arg.length > 80 ? `${arg.slice(0, 80)}…` : arg;
+  return arg.length > 80 ? `${arg.slice(0, 80)}…` : arg;
+}
+
+// One-line summary of a tool invocation, e.g.  ⏺ Bash(npm test)
+export function toolStartLine(
+  name: string,
+  input: Record<string, unknown>,
+): string {
+  const shown = toolArgPreview(input);
   return `${magenta("⏺")} ${bold(name)}${shown ? dim(`(${shown})`) : ""}`;
+}
+
+// Message line for the clack permission select (plain text; clack styles it).
+export function permissionLabel(
+  name: string,
+  input: Record<string, unknown>,
+): string {
+  const shown = toolArgPreview(input);
+  return `Allow ${name}${shown ? `(${shown})` : ""}?`;
+}
+
+export function formatAge(deltaMs: number): string {
+  const m = Math.floor(deltaMs / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 export function toolEndLine(output: string, isError: boolean): string {
@@ -94,15 +117,11 @@ export function todoBox(todos: readonly TodoItem[]): string {
   return todos.map((t) => `${mark[t.status]} ${t.content}`).join("\n");
 }
 
-export function permissionPrompt(
+export function permissionPromptPlain(
   name: string,
   input: Record<string, unknown>,
 ): string {
-  const preview =
-    name === "Bash"
-      ? String(input.command ?? "")
-      : String(input.file_path ?? JSON.stringify(input));
-  return `${yellow("?")} allow ${bold(name)}(${preview.slice(0, 80)})? ${dim("[y/N]")} `;
+  return `${yellow("?")} ${permissionLabel(name, input)} ${dim("[y/N]")} `;
 }
 
 export function interrupted(): string {

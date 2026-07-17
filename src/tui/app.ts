@@ -5,12 +5,13 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import { emitKeypressEvents } from "node:readline";
 import process from "node:process";
+import { isCancel, select } from "@clack/prompts";
 import { CLEAR_LINE, SPINNER_FRAMES, cyan, dim } from "./ansi.js";
 import {
   banner,
   helpText,
   interrupted,
-  permissionPrompt,
+  permissionLabel,
   statsLine,
   todoBox,
   toolEndLine,
@@ -68,28 +69,42 @@ class InterruptController {
     return this.controller.signal;
   }
 
+  // stdin/TTY state is owned by the readline Interface for its whole
+  // lifetime (it enabled raw mode at creation and restores the terminal on
+  // close). We only borrow the keypress stream. Toggling raw mode here
+  // re-enables kernel echo behind readline's back, and every submitted line
+  // then gets echoed twice (kernel + readline). Never pause stdin either: a
+  // paused TTY stream stops ref'ing the event loop and node exits mid-await
+  // on the next question(). Attach/detach the listener — nothing else.
   arm(): void {
     if (this.active) return;
     this.active = true;
     emitKeypressEvents(process.stdin);
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
     process.stdin.on("keypress", this.onKeypress);
     process.stdin.resume();
   }
 
-  // NOTE: never pause stdin here. readline owns the stream between turns; a
-  // paused TTY stream stops ref'ing the event loop and node exits mid-await
-  // on the next question(). We only detach our listener and drop raw mode.
   disarm(): void {
     if (!this.active) return;
     this.active = false;
     process.stdin.off("keypress", this.onKeypress);
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
   }
 
   reset(): void {
     this.controller = new AbortController();
   }
+
+  abort(): void {
+    this.controller.abort();
+  }
+}
+
+// clack prompts flip the TTY out of raw mode when they close; the readline
+// Interface expects raw to stay on for its whole lifetime (see the
+// InterruptController notes — kernel echo doubles every subsequent line
+// otherwise). Re-assert after every clack interaction.
+function restoreReadlineTty(): void {
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
 }
 
 function isAbort(err: unknown): boolean {
@@ -102,6 +117,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
   const spinner = new Spinner();
   const interrupt = new InterruptController();
   const turns: TurnStats[] = [];
+  const sessionAllow = new Set<string>();
   let streamedAnything = false;
 
   const io: TurnIO = {
@@ -126,10 +142,31 @@ export async function runApp(deps: AppDeps): Promise<void> {
     },
     permit: async (name, input) => {
       spinner.stop();
-      interrupt.disarm(); // hand stdin back to readline for the question
-      const answer = await rl.question(`\n${permissionPrompt(name, input)}`);
-      interrupt.arm();
-      return answer.trim().toLowerCase().startsWith("y");
+      if (sessionAllow.has(name)) return true;
+      // Esc inside the menu is clack's cancel (mapped to interrupt below),
+      // so our own listener is detached while the menu is up.
+      interrupt.disarm();
+      try {
+        const choice = await select({
+          message: permissionLabel(name, input),
+          options: [
+            { value: "once", label: "Allow once" },
+            { value: "session", label: `Allow ${name} for this session` },
+            { value: "deny", label: "Deny" },
+          ],
+        });
+        if (isCancel(choice)) {
+          interrupt.abort();
+          const err = new Error("aborted by user");
+          err.name = "AbortError";
+          throw err; // loop backfills tool_results, app prints interrupted
+        }
+        if (choice === "session") sessionAllow.add(name);
+        return choice === "once" || choice === "session";
+      } finally {
+        restoreReadlineTty();
+        interrupt.arm();
+      }
     },
   };
 

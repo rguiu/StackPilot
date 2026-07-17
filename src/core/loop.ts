@@ -116,9 +116,35 @@ export async function runTurn(
     const uses = toolUses(result.content);
     if (result.stopReason !== "tool_use" || uses.length === 0) break;
 
-    const results: unknown[] = [];
-    for (const use of uses) {
-      results.push(await dispatchTool(deps, use, stats));
+    const results: { tool_use_id: string }[] = [];
+    try {
+      for (const use of uses) {
+        results.push(
+          (await dispatchTool(deps, use, stats)) as { tool_use_id: string },
+        );
+      }
+    } catch (err) {
+      // Invariant: an assistant tool_use block stored in the tree MUST get a
+      // tool_result sibling, or every future request on this path is
+      // rejected by the API. On interrupt/crash mid-phase, backfill
+      // synthetic results for whatever didn't finish, then rethrow.
+      const done = new Set(results.map((r) => r.tool_use_id));
+      for (const use of uses) {
+        if (!done.has(use.id)) {
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content: "[interrupted by user]",
+            is_error: true,
+          } as { tool_use_id: string });
+        }
+      }
+      store.append({
+        type: "user",
+        parentUuid: leaf,
+        message: { role: "user", content: results },
+      });
+      throw err;
     }
     leaf = store.append({
       type: "user",

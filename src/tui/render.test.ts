@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatAge,
+  permissionLabel,
   statsLine,
   toolEndLine,
   toolStartLine,
@@ -66,5 +68,28 @@ describe("usageSummary", () => {
     expect(out).toContain("turns          2");
     expect(out).toContain("input tokens   200");
     expect(out).toContain("output tokens  100");
+  });
+});
+
+describe("permissionLabel", () => {
+  it("previews the command for Bash", () => {
+    expect(permissionLabel("Bash", { command: "rm -rf build" })).toBe(
+      "Allow Bash(rm -rf build)?",
+    );
+  });
+
+  it("works without a previewable arg", () => {
+    expect(permissionLabel("TodoWrite", {})).toBe("Allow TodoWrite?");
+  });
+});
+
+describe("formatAge", () => {
+  it.each([
+    [30_000, "just now"],
+    [5 * 60_000, "5m ago"],
+    [3 * 3_600_000, "3h ago"],
+    [49 * 3_600_000, "2d ago"],
+  ])("%d ms → %s", (ms, expected) => {
+    expect(formatAge(ms)).toBe(expected);
   });
 });

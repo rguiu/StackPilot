@@ -26,6 +26,30 @@ export function projectsDir(home: string = homedir()): string {
   return join(home, ".stackpilot", "projects");
 }
 
+export interface SessionSummary {
+  path: string;
+  id: string;
+  mtimeMs: number;
+  preview: string | null;
+}
+
+// First user prompt text in a session (Claude transcripts use both string
+// and block-array content; tool_result-only user events are skipped).
+export function firstUserText(events: readonly SessionEvent[]): string | null {
+  for (const e of events) {
+    if (e.type !== "user" || !e.message) continue;
+    const content = e.message.content;
+    if (typeof content === "string" && content.trim()) return content.trim();
+    if (!Array.isArray(content)) continue;
+    for (const block of content as { type?: string; text?: string }[]) {
+      if (block.type === "text" && block.text?.trim()) {
+        return block.text.trim();
+      }
+    }
+  }
+  return null;
+}
+
 export class SessionStore {
   readonly sessionId: string;
   readonly path: string;
@@ -51,21 +75,40 @@ export class SessionStore {
 
   // Newest session file for a cwd, or null.
   static newestFor(cwd: string, home?: string): string | null {
+    const newest = SessionStore.summariesFor(cwd, home)[0];
+    return newest?.path ?? null;
+  }
+
+  // All sessions for a cwd, newest first, with a preview of the first user
+  // prompt (for resume pickers).
+  static summariesFor(cwd: string, home?: string): SessionSummary[] {
     const dir = join(projectsDir(home), projectSlug(cwd));
     let entries: string[];
     try {
       entries = readdirSync(dir);
     } catch {
-      return null;
+      return [];
     }
-    let newest: { path: string; mtime: number } | null = null;
+    const out: SessionSummary[] = [];
     for (const e of entries) {
       if (!e.endsWith(".jsonl")) continue;
-      const p = join(dir, e);
-      const mtime = statSync(p).mtimeMs;
-      if (!newest || mtime > newest.mtime) newest = { path: p, mtime };
+      const path = join(dir, e);
+      let mtimeMs: number;
+      let events: SessionEvent[];
+      try {
+        mtimeMs = statSync(path).mtimeMs;
+        events = parseEventLines(readFileSync(path, "utf8"));
+      } catch {
+        continue; // unreadable session file — skip, don't crash the picker
+      }
+      out.push({
+        path,
+        id: basename(e, ".jsonl"),
+        mtimeMs,
+        preview: firstUserText(events),
+      });
     }
-    return newest?.path ?? null;
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   }
 
   all(): readonly SessionEvent[] {
