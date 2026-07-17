@@ -62,6 +62,11 @@ control + cost routing — not on feature count.
 4. **Cost routing** — main model premium, utility calls cheap provider,
    per-subsystem token budgets (system <= X, tools <= Y, reminders <= Z).
 5. **Deterministic replay** — event-sourced sessions debuggable to any state.
+6. **Engineering memory** _(shipped)_ — the aap proxy indexes every recorded
+   session (FTS5 over per-request deltas: prompts, responses, tool calls);
+   the `SearchHistory` tool lets the agent ask "have we solved this
+   before?" across agents, models, and projects. Claude Code has nothing
+   comparable.
 
 ## Phases
 

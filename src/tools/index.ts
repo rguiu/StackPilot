@@ -4,6 +4,7 @@
 import { editTool, readTool, writeTool } from "./fs.js";
 import { bashTool } from "./shell.js";
 import { globTool, grepTool } from "./search.js";
+import { searchHistoryTool } from "./history.js";
 import { createTodoTool, type TodoItem } from "./todo.js";
 import { ToolInputError, type ToolDef, type ToolResult } from "./types.js";
 
@@ -39,6 +40,7 @@ export function createRegistry(): Registry {
     grepTool,
     globTool,
     createTodoTool(todoState),
+    searchHistoryTool,
   ];
   const byName = new Map(defs.map((d) => [d.name, d]));
   let enabled: ReadonlySet<string> | null = null;

@@ -171,6 +171,31 @@ now re-asserts raw **and resumes**.
 
 Tests: 83. Gates green.
 
+## Engineering memory — SearchHistory + aap FTS index
+
+The differentiator Claude Code doesn't have: **searchable memory over
+every recorded session**, across agents, models, and projects.
+
+**aap side** (branch `feat/search-index`, commit `74c7e84`): FTS5
+`search_docs` table indexes the per-request **delta** (last request
+message, assistant response text, tool name + input JSON) — system
+prompts/tool schemas excluded, full-history duplication avoided. Built
+idempotently during `aap parse`; rebuildable with `parse --all`;
+`GET /search?q=` + `aap search` CLI with hostile-syntax fallback.
+272 tests.
+
+**stackpilot side:** `SearchHistory` tool (read-only, appended LAST in
+the registry — cache-prefix rule), origin auto-derived from the proxy
+base URL, 5s timeout, graceful degradation when aap is old/absent.
+90 tests.
+
+**Live proof** (session `sp-memory-demo`): asked "have we ever worked on
+safeDivide?" — the agent called SearchHistory and correctly reconstructed
+cross-agent history: `sp-rewind` (interactive **Claude Code** session:
+divide→safeDivide rename) and `sp-p1-smoke` (stackpilot's own first smoke
+test: the RangeError comment), with paths and timestamps. One tool call,
+$0.0051.
+
 ## Cumulative state
 
 - ~2,700 LOC src + 9 test suites (83 tests), gates: typecheck / vitest /

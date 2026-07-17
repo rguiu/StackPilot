@@ -309,15 +309,16 @@ exceptions are NOT swallowed — they bubble (fail fast).
 Schemas stay **Claude-familiar on purpose** (PLAN #9): models are trained
 on these shapes; we change implementations, not signatures.
 
-| Tool      | readOnly | Notes                                                                                                                                                                                  |
-| --------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Read      | yes      | line-numbered `N: text`, offset/limit, 2000-line / 2000-char-per-line caps, 40k output cap with truncation marker                                                                      |
-| Write     | no       | mkdir -p parents, byte count reported                                                                                                                                                  |
-| Edit      | no       | exact-string replace; **unique match required** unless `replace_all`; identical old/new rejected; match count reported                                                                 |
-| Bash      | no       | `bash -c` per call (persistent shell deliberately deferred), cwd-scoped, default 120s / max 600s timeout, SIGKILL on timeout, stdout+stderr merged, 30k cap, non-zero exit → `isError` |
-| Grep      | yes      | ripgrep: `--line-number --no-heading --max-count 50`, optional path + `--glob`; exit 1 → "no matches"; missing rg → explicit error                                                     |
-| Glob      | yes      | own walk (no deps): skips `.git node_modules dist .stackpilot`, depth ≤ 12, ≤ 5000 files scanned, ≤ 200 results, `globToRegExp` supports `** * ?`                                      |
-| TodoWrite | yes      | replaces session todo list; strict shape validation; state held in registry, rendered by the TUI                                                                                       |
+| Tool          | readOnly | Notes                                                                                                                                                                                                                                                                                       |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read          | yes      | line-numbered `N: text`, offset/limit, 2000-line / 2000-char-per-line caps, 40k output cap with truncation marker                                                                                                                                                                           |
+| Write         | no       | mkdir -p parents, byte count reported                                                                                                                                                                                                                                                       |
+| Edit          | no       | exact-string replace; **unique match required** unless `replace_all`; identical old/new rejected; match count reported                                                                                                                                                                      |
+| Bash          | no       | `bash -c` per call (persistent shell deliberately deferred), cwd-scoped, default 120s / max 600s timeout, SIGKILL on timeout, stdout+stderr merged, 30k cap, non-zero exit → `isError`                                                                                                      |
+| Grep          | yes      | ripgrep: `--line-number --no-heading --max-count 50`, optional path + `--glob`; exit 1 → "no matches"; missing rg → explicit error                                                                                                                                                          |
+| Glob          | yes      | own walk (no deps): skips `.git node_modules dist .stackpilot`, depth ≤ 12, ≤ 5000 files scanned, ≤ 200 results, `globToRegExp` supports `** * ?`                                                                                                                                           |
+| TodoWrite     | yes      | replaces session todo list; strict shape validation; state held in registry, rendered by the TUI                                                                                                                                                                                            |
+| SearchHistory | yes      | **engineering memory**: full-text query against the aap proxy's FTS index of every recorded session (see §9); origin from `$STACKPILOT_AAP_ORIGIN` → `$ANTHROPIC_BASE_URL` origin → `127.0.0.1:8080`; 5s timeout; degrades to an error result when aap is unreachable or predates `/search` |
 
 `index.ts` — registry. **Tool order is part of the cache prefix: append
 new tools at the END only** (comment enforced by review, invariant by
@@ -448,6 +449,7 @@ through aap so the wire side is provable from traces.
 | `ANTHROPIC_BASE_URL`                   | transport target (aap proxy routing)                 |
 | `STACKPILOT_MODEL` / `ANTHROPIC_MODEL` | model selection (default `claude-haiku-4-5`)         |
 | `STACKPILOT_CONFIG`                    | config file path (default ~/.stackpilot/config.toml) |
+| `STACKPILOT_AAP_ORIGIN`                | aap origin for SearchHistory (default: derived)      |
 | `NO_COLOR`                             | disable ANSI styling                                 |
 
 ## 12. Deliberate omissions (YAGNI until recorded need)
