@@ -19,6 +19,7 @@ const stats = (over: Partial<TurnStats["usage"]> = {}): TurnStats => ({
     cache_creation_input_tokens: 0,
     ...over,
   },
+  notes: [],
 });
 
 describe("toolStartLine", () => {
@@ -56,9 +57,10 @@ describe("statsLine", () => {
     expect(statsLine(stats())).not.toContain("cache");
   });
 
-  it("includes cache when present", () => {
+  it("includes cache and hit rate when present", () => {
     const line = statsLine(stats({ cache_read_input_tokens: 500 }));
     expect(line).toContain("500r");
+    expect(line).toContain("83% cached"); // 500 / (100 + 500)
   });
 });
 

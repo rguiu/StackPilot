@@ -13,6 +13,7 @@ import { isCancel, select } from "@clack/prompts";
 import { resolveConfig, ConfigError } from "../config.js";
 import { buildSystemPrompt } from "../core/prompt.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
+import { CacheLedger } from "../core/cache.js";
 import { reduce } from "../core/reducer.js";
 import { SessionStore } from "../session/store.js";
 import { createRegistry } from "../tools/index.js";
@@ -112,6 +113,9 @@ function printStats(stats: TurnStats, model: string): void {
   process.stderr.write(
     `\n[${model}] req ${stats.requests} · tools ${stats.toolCalls} · in ${u.input_tokens} · cache-r ${u.cache_read_input_tokens} · cache-w ${u.cache_creation_input_tokens} · out ${u.output_tokens}\n`,
   );
+  for (const note of stats.notes) {
+    process.stderr.write(`  ⚠ ${note}\n`);
+  }
 }
 
 export async function main(): Promise<void> {
@@ -138,11 +142,12 @@ export async function main(): Promise<void> {
       : openStore(cwd, args.continue_);
   const registry = createRegistry();
   const system = buildSystemPrompt(cwd);
+  const ledger = new CacheLedger();
 
   if (args.prompt !== undefined) {
     const io = makeIO(null, args.yolo);
     const stats = await runTurn(
-      { store, registry, config, system, io, stream: streamMessage },
+      { store, registry, config, system, io, ledger, stream: streamMessage },
       args.prompt,
     );
     printStats(stats, config.model);
@@ -168,7 +173,7 @@ export async function main(): Promise<void> {
     if (line === "") continue;
     if (line === "/exit" || line === "/quit") break;
     const stats = await runTurn(
-      { store, registry, config, system, io, stream: streamMessage },
+      { store, registry, config, system, io, ledger, stream: streamMessage },
       line,
     );
     printStats(stats, config.model);

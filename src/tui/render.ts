@@ -75,10 +75,17 @@ export function toolEndLine(output: string, isError: boolean): string {
 
 export function statsLine(stats: TurnStats): string {
   const u = stats.usage;
-  const cache =
-    u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0
-      ? ` · cache ${u.cache_read_input_tokens}r/${u.cache_creation_input_tokens}w`
+  const totalIn =
+    u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens;
+  const hasCache =
+    u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0;
+  const pct =
+    hasCache && totalIn > 0
+      ? ` (${Math.round((u.cache_read_input_tokens / totalIn) * 100)}% cached)`
       : "";
+  const cache = hasCache
+    ? ` · cache ${u.cache_read_input_tokens}r/${u.cache_creation_input_tokens}w${pct}`
+    : "";
   return dim(
     `${stats.requests} req · ${stats.toolCalls} tools · ${u.input_tokens} in${cache} · ${u.output_tokens} out`,
   );

@@ -19,6 +19,7 @@ import {
   usageSummary,
 } from "./render.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
+import { CacheLedger } from "../core/cache.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
 import type { TransportConfig } from "../transport/anthropic.js";
@@ -118,6 +119,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
   const interrupt = new InterruptController();
   const turns: TurnStats[] = [];
   const sessionAllow = new Set<string>();
+  const ledger = new CacheLedger();
   let streamedAnything = false;
 
   const io: TurnIO = {
@@ -203,6 +205,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
           config,
           system,
           io,
+          ledger,
           signal: interrupt.signal,
           stream: streamMessage,
         },
@@ -211,6 +214,9 @@ export async function runApp(deps: AppDeps): Promise<void> {
       turns.push(stats);
       spinner.stop();
       process.stdout.write(`\n\n${statsLine(stats)}\n`);
+      for (const note of stats.notes) {
+        process.stdout.write(`${dim(`⚠ ${note}`)}\n`);
+      }
     } catch (err) {
       spinner.stop();
       if (isAbort(err)) {

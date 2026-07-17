@@ -4,6 +4,7 @@
 
 import type { SessionStore } from "../session/store.js";
 import { reduce, toApiMessages } from "./reducer.js";
+import { applyCacheControl, type CacheLedger } from "./cache.js";
 import type {
   MessagesRequest,
   StreamResult,
@@ -26,6 +27,10 @@ export interface TurnDeps {
   config: TransportConfig;
   system: string;
   io: TurnIO;
+  // Cache awareness (§4.4 of IMPLEMENTATION.md): predicts hits before each
+  // request and reconciles with the server's usage counters after. Owned by
+  // the caller so it spans turns.
+  ledger?: CacheLedger;
   // Optional interrupt (Esc in the TUI). Aborting mid-stream discards the
   // in-flight assistant turn; the event tree stays consistent because events
   // are only appended after a request completes.
@@ -45,6 +50,8 @@ export interface TurnStats {
     cache_read_input_tokens: number;
     cache_creation_input_tokens: number;
   };
+  // Cache verdicts worth surfacing (regens, misses) — empty on clean turns.
+  notes: string[];
 }
 
 const MAX_ITERATIONS = 40;
@@ -79,6 +86,7 @@ export async function runTurn(
       cache_read_input_tokens: 0,
       cache_creation_input_tokens: 0,
     },
+    notes: [],
   };
 
   let leaf = reduce(store.all()).leafUuid;
@@ -90,18 +98,17 @@ export async function runTurn(
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const reduced = reduce(store.all());
-    stats.requests++;
-    const result = await deps.stream(
-      config,
-      {
-        system,
-        tools: registry.schemas(),
-        messages: toApiMessages(reduced.messages),
-      },
-      io.onText,
-      deps.signal,
+    const request = applyCacheControl(
+      system,
+      registry.schemas(),
+      toApiMessages(reduced.messages),
     );
+    deps.ledger?.beforeRequest(request);
+    stats.requests++;
+    const result = await deps.stream(config, request, io.onText, deps.signal);
     accumulate(stats, result.usage);
+    const verdict = deps.ledger?.afterResponse(result.usage);
+    if (verdict?.note) stats.notes.push(verdict.note);
 
     leaf = store.append({
       type: "assistant",
