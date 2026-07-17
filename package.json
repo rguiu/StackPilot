@@ -1,0 +1,26 @@
+{
+  "name": "stackpilot",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "A lean, cost-optimal coding agent with a fully controllable message stack. Behavioral study of Claude Code, rebuilt smaller.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "tsx src/cli/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "prettier": "^3.9.4",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
