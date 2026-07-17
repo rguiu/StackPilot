@@ -20,6 +20,7 @@ import {
 } from "./render.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
+import type { ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
 import type { TransportConfig } from "../transport/anthropic.js";
@@ -30,6 +31,7 @@ export interface AppDeps {
   registry: Registry;
   config: TransportConfig;
   system: string;
+  pricing?: Record<string, ModelPricing>;
 }
 
 class Spinner {
@@ -113,7 +115,7 @@ function isAbort(err: unknown): boolean {
 }
 
 export async function runApp(deps: AppDeps): Promise<void> {
-  const { store, registry, config, system } = deps;
+  const { store, registry, config, system, pricing } = deps;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const spinner = new Spinner();
   const interrupt = new InterruptController();
@@ -206,6 +208,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
           system,
           io,
           ledger,
+          pricing,
           signal: interrupt.signal,
           stream: streamMessage,
         },

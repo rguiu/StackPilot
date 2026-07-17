@@ -3,6 +3,7 @@
 
 import { bold, cyan, dim, green, magenta, red, yellow } from "./ansi.js";
 import type { TurnStats } from "../core/loop.js";
+import { formatUsd } from "../core/cost.js";
 import type { TodoItem } from "../tools/todo.js";
 
 export function banner(model: string, sessionId: string, cwd: string): string {
@@ -86,8 +87,9 @@ export function statsLine(stats: TurnStats): string {
   const cache = hasCache
     ? ` · cache ${u.cache_read_input_tokens}r/${u.cache_creation_input_tokens}w${pct}`
     : "";
+  const cost = stats.costUsd !== null ? ` · ${formatUsd(stats.costUsd)}` : "";
   return dim(
-    `${stats.requests} req · ${stats.toolCalls} tools · ${u.input_tokens} in${cache} · ${u.output_tokens} out`,
+    `${stats.requests} req · ${stats.toolCalls} tools · ${u.input_tokens} in${cache} · ${u.output_tokens} out${cost}`,
   );
 }
 
@@ -100,9 +102,24 @@ export function usageSummary(turns: readonly TurnStats[]): string {
       output: acc.output + t.usage.output_tokens,
       cacheR: acc.cacheR + t.usage.cache_read_input_tokens,
       cacheW: acc.cacheW + t.usage.cache_creation_input_tokens,
+      cost: acc.cost + (t.costUsd ?? 0),
+      unpriced: acc.unpriced || t.costUsd === null,
     }),
-    { requests: 0, tools: 0, input: 0, output: 0, cacheR: 0, cacheW: 0 },
+    {
+      requests: 0,
+      tools: 0,
+      input: 0,
+      output: 0,
+      cacheR: 0,
+      cacheW: 0,
+      cost: 0,
+      unpriced: false,
+    },
   );
+  const costLine =
+    turns.length === 0
+      ? "n/a"
+      : `${formatUsd(total.cost)}${total.unpriced ? " (some turns unpriced)" : ""}`;
   return [
     `turns          ${turns.length}`,
     `requests       ${total.requests}`,
@@ -111,6 +128,7 @@ export function usageSummary(turns: readonly TurnStats[]): string {
     `cache read     ${total.cacheR}`,
     `cache write    ${total.cacheW}`,
     `output tokens  ${total.output}`,
+    `cost           ${costLine}`,
   ].join("\n");
 }
 

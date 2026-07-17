@@ -5,6 +5,8 @@
 import type { SessionStore } from "../session/store.js";
 import { reduce, toApiMessages } from "./reducer.js";
 import { applyCacheControl, type CacheLedger } from "./cache.js";
+import { computeCostUsd, resolveRates } from "./cost.js";
+import type { ModelPricing } from "../config.js";
 import type {
   MessagesRequest,
   StreamResult,
@@ -31,6 +33,9 @@ export interface TurnDeps {
   // request and reconciles with the server's usage counters after. Owned by
   // the caller so it spans turns.
   ledger?: CacheLedger;
+  // Pricing tables keyed by server-reported model id; when provided, turn
+  // cost is computed per request (unknown model → costUsd null + one note).
+  pricing?: Record<string, ModelPricing>;
   // Optional interrupt (Esc in the TUI). Aborting mid-stream discards the
   // in-flight assistant turn; the event tree stays consistent because events
   // are only appended after a request completes.
@@ -52,6 +57,11 @@ export interface TurnStats {
   };
   // Cache verdicts worth surfacing (regens, misses) — empty on clean turns.
   notes: string[];
+  // Dollar cost of the turn; null when no/incomplete pricing is available.
+  costUsd: number | null;
+  // Total input tokens (fresh + cache read + cache write) of the LAST
+  // request — the auto-compaction trigger metric.
+  lastRequestInputTokens: number;
 }
 
 const MAX_ITERATIONS = 40;
@@ -87,7 +97,10 @@ export async function runTurn(
       cache_creation_input_tokens: 0,
     },
     notes: [],
+    costUsd: null,
+    lastRequestInputTokens: 0,
   };
+  let priceIncomplete = false;
 
   let leaf = reduce(store.all()).leafUuid;
   leaf = store.append({
@@ -107,6 +120,21 @@ export async function runTurn(
     stats.requests++;
     const result = await deps.stream(config, request, io.onText, deps.signal);
     accumulate(stats, result.usage);
+    stats.lastRequestInputTokens =
+      (result.usage.input_tokens ?? 0) +
+      (result.usage.cache_read_input_tokens ?? 0) +
+      (result.usage.cache_creation_input_tokens ?? 0);
+    if (deps.pricing && !priceIncomplete) {
+      const rates = resolveRates(result.model, deps.pricing);
+      if (rates === null) {
+        stats.notes.push(`no pricing for model ${result.model ?? "(unknown)"}`);
+        stats.costUsd = null;
+        priceIncomplete = true;
+      } else {
+        stats.costUsd =
+          (stats.costUsd ?? 0) + computeCostUsd(result.usage, rates);
+      }
+    }
     const verdict = deps.ledger?.afterResponse(result.usage);
     if (verdict?.note) stats.notes.push(verdict.note);
 

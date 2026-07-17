@@ -10,7 +10,7 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import process from "node:process";
 import { isCancel, select } from "@clack/prompts";
-import { resolveConfig, ConfigError } from "../config.js";
+import { loadAppConfig, ConfigError } from "../config.js";
 import { buildSystemPrompt } from "../core/prompt.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
@@ -120,9 +120,9 @@ function printStats(stats: TurnStats, model: string): void {
 
 export async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  let config;
+  let appConfig;
   try {
-    config = resolveConfig(process.env, { model: args.model });
+    appConfig = loadAppConfig(process.env, { model: args.model });
   } catch (err) {
     if (err instanceof ConfigError) {
       console.error(`stackpilot: ${err.message}`);
@@ -130,6 +130,8 @@ export async function main(): Promise<void> {
     }
     throw err;
   }
+  const config = appConfig.transport;
+  const pricing = appConfig.pricing;
 
   const cwd = process.cwd();
   const interactiveTty =
@@ -147,7 +149,16 @@ export async function main(): Promise<void> {
   if (args.prompt !== undefined) {
     const io = makeIO(null, args.yolo);
     const stats = await runTurn(
-      { store, registry, config, system, io, ledger, stream: streamMessage },
+      {
+        store,
+        registry,
+        config,
+        system,
+        io,
+        ledger,
+        pricing,
+        stream: streamMessage,
+      },
       args.prompt,
     );
     printStats(stats, config.model);
@@ -156,7 +167,7 @@ export async function main(): Promise<void> {
   }
 
   if (process.stdin.isTTY && process.stdout.isTTY) {
-    await runApp({ store, registry, config, system });
+    await runApp({ store, registry, config, system, pricing });
     return;
   }
 
@@ -173,7 +184,16 @@ export async function main(): Promise<void> {
     if (line === "") continue;
     if (line === "/exit" || line === "/quit") break;
     const stats = await runTurn(
-      { store, registry, config, system, io, ledger, stream: streamMessage },
+      {
+        store,
+        registry,
+        config,
+        system,
+        io,
+        ledger,
+        pricing,
+        stream: streamMessage,
+      },
       line,
     );
     printStats(stats, config.model);

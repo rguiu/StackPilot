@@ -20,6 +20,8 @@ const stats = (over: Partial<TurnStats["usage"]> = {}): TurnStats => ({
     ...over,
   },
   notes: [],
+  costUsd: null,
+  lastRequestInputTokens: 0,
 });
 
 describe("toolStartLine", () => {
@@ -62,6 +64,12 @@ describe("statsLine", () => {
     expect(line).toContain("500r");
     expect(line).toContain("83% cached"); // 500 / (100 + 500)
   });
+
+  it("shows dollars when priced, omits when not", () => {
+    const priced = { ...stats(), costUsd: 0.0123 };
+    expect(statsLine(priced)).toContain("$0.0123");
+    expect(statsLine(stats())).not.toContain("$");
+  });
 });
 
 describe("usageSummary", () => {
@@ -70,6 +78,12 @@ describe("usageSummary", () => {
     expect(out).toContain("turns          2");
     expect(out).toContain("input tokens   200");
     expect(out).toContain("output tokens  100");
+  });
+
+  it("totals cost and flags unpriced turns", () => {
+    const priced = { ...stats(), costUsd: 0.01 };
+    expect(usageSummary([priced, priced])).toContain("$0.0200");
+    expect(usageSummary([priced, stats()])).toContain("some turns unpriced");
   });
 });
 

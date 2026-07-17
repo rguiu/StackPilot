@@ -1,0 +1,34 @@
+# stackpilot configuration. Copy to ~/.stackpilot/config.toml (or point
+# $STACKPILOT_CONFIG at it). Everything here is optional; defaults apply
+# when the file is missing.
+#
+# NOTE: "permanent" saves from /config rewrite this file and do not
+# preserve comments.
+
+# Auto-compaction threshold: when the last request's total input tokens
+# (fresh + cache reads + cache writes) exceed this, the session compacts
+# automatically. 0 disables.
+autoCompactAtTokens = 160000
+
+# Tools sent to the model (schema presence, not just permission). Fewer
+# tools = smaller static cache prefix = cheaper sessions. Omit the section
+# to enable all. Order does not matter here — the canonical registry order
+# is always preserved on the wire (cache-prefix stability).
+# [tools]
+# enabled = ["Read", "Edit", "Bash", "Grep", "Glob"]
+
+# Pricing per million tokens, keyed by the model id the SERVER reports
+# (dated snapshot). A date-suffix-stripped fallback is tried, so the bare
+# alias key also works. Same schema as ai-agent-profiler — blocks can be
+# copied between the two configs verbatim.
+[pricing."claude-haiku-4-5-20251001"]
+inputPerMTok = 1.0
+outputPerMTok = 5.0
+cacheInputPerMTok = 0.10
+cacheWritePerMTok = 1.25
+
+[pricing."claude-haiku-4-5"]
+inputPerMTok = 1.0
+outputPerMTok = 5.0
+cacheInputPerMTok = 0.10
+cacheWritePerMTok = 1.25
