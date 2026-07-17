@@ -1,6 +1,6 @@
 {
   "name": "stackpilot",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "description": "A lean, cost-optimal coding agent with a fully controllable message stack. Behavioral study of Claude Code, rebuilt smaller.",
   "license": "MIT",
