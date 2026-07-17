@@ -89,13 +89,13 @@ aap serve
 aap run --meta scenario=<name> claude ...
 ```
 
-| Scenario           | What it exercises                            | Status                                      |
-| ------------------ | -------------------------------------------- | ------------------------------------------- |
-| fresh-baseline     | system prompt, tool schemas, cache writes    | recorded                                    |
-| multi-turn-edits   | stack growth, cache reads, edit loops        | recorded                                    |
-| compact            | /compact summarization protocol              | recorded                                    |
-| subagent-plan-todo | Task sidechains, plan mode, system-reminders | recorded                                    |
-| rewind-resume      | transcript tree branching, resume reload     | manual — needs interactive TUI (double-Esc) |
+| Scenario           | What it exercises                            | Status   |
+| ------------------ | -------------------------------------------- | -------- |
+| fresh-baseline     | system prompt, tool schemas, cache writes    | recorded |
+| multi-turn-edits   | stack growth, cache reads, edit loops        | recorded |
+| compact            | /compact summarization protocol              | recorded |
+| subagent-plan-todo | Task sidechains, plan mode, system-reminders | recorded |
+| rewind-resume      | transcript tree branching, resume reload     | recorded |
 
 Extraction targets in `docs/protocol/`:
 
