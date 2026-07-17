@@ -1,7 +1,7 @@
 # stackpilot — Implementation Reference
 
-Accurate as of P2a (`1d9e8f5`): caching + cache ledger landed. Companion
-docs: [PLAN.md](PLAN.md) (roadmap, feature verdicts),
+Accurate as of P2b (`cost`, `compact`, `/config` commits). Companion docs:
+[PLAN.md](PLAN.md) (roadmap, feature verdicts),
 [CHANGELOG.md](CHANGELOG.md) (chronological record with evidence), and
 [protocol/](protocol/) (recorded Claude Code wire behavior this design is
 based on).
@@ -217,6 +217,66 @@ Known limits: ledger is in-memory per process (restart → first prediction
 "unknown", verification re-syncs); server cache state is inferred, never
 observed directly.
 
+### 4.5 `cost.ts` — dollar meter (pure)
+
+- `resolveRates(model, pricing)`: exact key on the **server-reported**
+  model id, then a date-suffix-stripped fallback
+  (`claude-haiku-4-5-20251001` → `claude-haiku-4-5`). Unknown → `null`,
+  never a guessed price.
+- `computeCostUsd(usage, rates)`: input/output at their rates; cache reads
+  at `cacheInputPerMTok`, cache writes at `cacheWritePerMTok`, both
+  falling back to the full input rate (conservative).
+- Wiring: `TurnDeps.pricing` → per-request accumulation into
+  `TurnStats.costUsd` (`null` + one `⚠ no pricing for <model>` note when
+  any request is unpriced). Stats line shows `$…`; `/usage` totals the
+  session and flags unpriced turns.
+- Verified against aap: same session, our meter $0.0170 vs aap's
+  independent trace-derived $0.017.
+
+### 4.6 `compact.ts` — compaction (see docs/protocol/compaction.md)
+
+- The compact request is a **pure append to the cached prefix** — same
+  tools (never dropped: removing them would re-bill the whole history at
+  1.0x instead of 0.1x), same system, same messages, plus one instruction
+  user message (`COMPACT_INSTRUCTION`, our own text: Goal / State / Key
+  context / Next steps, summary-only — no `<analysis>` scratchpad).
+- `runCompact`: streams the summary, then appends a user event flagged
+  `isCompactSummary: true` (Claude's field name — fixture-compatible).
+  Empty summary → throw, tree untouched. Returns dropped-message count,
+  summary size, usage, cost.
+- Reducer boundary (§4.1): the API-visible conversation restarts at the
+  **last** `isCompactSummary` event on the active path; everything before
+  it stays on disk (append-only, still rewindable).
+- Triggers: `/compact`, and auto-compact after any turn whose
+  `lastRequestInputTokens` ≥ `autoCompactAtTokens` (config, default 160k,
+  0 = off, mid-session adjustable via `/config`).
+- Post-compact economics are surfaced honestly: the next request's ledger
+  verdict is `predicted-regen (message[0] changed)` — a deliberate,
+  visible prefix reset.
+
+### 4.7 Tool-set configuration
+
+The enabled tool set controls **schema presence** (not just permission) —
+it is the head of the cache prefix. Precedence: `--tools` flag >
+`[tools].enabled` in config > all registry tools.
+
+- Registry: `setEnabled(names|null)` / `isEnabled` / `enabledNames`;
+  `schemas()` filters **preserving canonical order** (identical subsets →
+  identical prefix bytes). Dispatch rejects disabled tools before the
+  permission gate (`tool disabled for this session: X`).
+- `/config` → Tools (clack multiselect, read-only/mutating hints):
+  - before the first request: applies immediately + _session-only /
+    permanent_ choice; the applied set is recorded as a chained `config`
+    event (`meta.tools`) for audit/replay;
+  - after the first request: **never applies mid-session** (would
+    regenerate the entire cache); only _save as default for future
+    sessions_ is offered.
+- `/config` → Auto-compact threshold: prefix-safe, applies immediately,
+  optional permanent save.
+- Permanent saves go through `saveConfigPatch` (parse → merge →
+  stringify; comments in the TOML are not preserved — documented v1
+  tradeoff).
+
 ## 5. Transport (`src/transport/anthropic.ts`)
 
 Explicit `fetch` + hand-rolled SSE parsing; no SDK.
@@ -306,8 +366,12 @@ exact `y`/`yes` only.
    raw at creation and expects it for its lifetime; flipping it off
    re-enables kernel echo → every submitted line prints twice (kernel +
    readline). The interrupt listener therefore only attaches/detaches.
-3. **clack drops raw mode when a prompt closes** → `restoreReadlineTty()`
-   re-asserts it after every clack interaction, or lesson 2 repeats.
+3. **clack drops raw mode AND pauses stdin when a prompt closes** →
+   `restoreReadlineTty()` re-asserts raw _and resumes_ after every clack
+   interaction, or lessons 1–2 repeat. (The permission path originally
+   survived only because `interrupt.arm()` resumes as a side effect; the
+   `/config` path exposed the drain: clean exit 0 right after
+   "tools enabled" printed.)
 4. **Exact-match approvals.** Type-ahead during streaming lands in the next
    prompt; `startsWith("y")` could auto-approve a mutation from buffered
    noise.
@@ -320,18 +384,25 @@ stackpilot -c              continue: picker when >1 session (TTY), else newest
 stackpilot -p "…"          one headless turn, fresh session unless -c
 stackpilot --yolo          skip permission prompts
 stackpilot --model <id>    model override
+stackpilot --tools A,B,C   enable only these tools (schema presence)
 ```
 
-- Unknown args → exit 2 with message.
+- Unknown args → exit 2 with message; unknown tool names in `--tools` →
+  exit 2 listing valid names.
 - `-c` picker: `id.slice(0,8) · age · first-prompt preview` (top 10),
   cancel exits 0. Single session skips the menu.
-- Config resolution (`src/config.ts`): API key from `ANTHROPIC_API_KEY`,
-  else the `env` block of `~/.claude/settings.json` (documented
-  convenience — same key Claude Code uses; never persisted, never logged);
-  missing → `ConfigError`, exit 1. Model: `--model` >
+- Config file (`~/.stackpilot/config.toml`, or `$STACKPILOT_CONFIG`;
+  `config.example.toml` shipped): `[pricing."<model>"]` blocks
+  (aap-compatible, copy-paste between the tools), `[tools].enabled`,
+  `autoCompactAtTokens`. Missing file = defaults; malformed = fail fast.
+- Credential resolution (`src/config.ts`): API key from
+  `ANTHROPIC_API_KEY`, else the `env` block of `~/.claude/settings.json`
+  (documented convenience — same key Claude Code uses; never persisted,
+  never logged); missing → `ConfigError`, exit 1. Model: `--model` >
   `STACKPILOT_MODEL` > `ANTHROPIC_MODEL` > `claude-haiku-4-5`. Base URL:
   `ANTHROPIC_BASE_URL` (trailing slash stripped) or api.anthropic.com.
-- Per-turn stats line to stderr: requests, tools, in/out, cache r/w.
+- Per-turn stats line to stderr: requests, tools, in/out, cache r/w, $.
+- Headless mode has no auto-compaction and no `/config` (TUI-only).
 
 ## 9. Observability & dogfooding
 
@@ -350,17 +421,20 @@ cost-verified against Claude Code baselines (`aap compare` for A/B in P3).
 
 ## 10. Testing
 
-`vitest`, 55 tests green at last commit. Philosophy: pure logic gets
+`vitest`, 83 tests green at last commit. Philosophy: pure logic gets
 tests; thin I/O shells get live tmux verification instead.
 
 | Suite             | Anchors                                                                                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reducer.test.ts` | **golden fixture**: real Claude rewind transcript → exact tree numbers; synthetic linear/rewind/metadata cases                                                          |
-| `loop.test.ts`    | tool_result backfill on aborted permission; tool_use/tool_result pairing on the happy path (fake streams, temp-home stores)                                             |
-| `tools.test.ts`   | Read numbering/offset; Edit unique-match/ambiguous/replace_all/missing; globToRegExp table                                                                              |
+| `reducer.test.ts` | **golden fixture**: real Claude rewind transcript → exact tree numbers; synthetic linear/rewind/metadata cases; compact-summary boundary incl. last-summary-wins        |
+| `loop.test.ts`    | tool_result backfill on aborted permission; tool_use/tool_result pairing; disabled tool rejected before the permission gate (fake streams, temp-home stores)            |
+| `tools.test.ts`   | Read numbering/offset; Edit unique-match/ambiguous/replace_all/missing; globToRegExp table; registry enabled-set filtering (order preserved, empty set, unknown names)  |
 | `store.test.ts`   | summariesFor ordering + previews (utimes-controlled); firstUserText string/block/tool_result-skip/null                                                                  |
-| `render.test.ts`  | tool lines, stats cache visibility + hit %, usage summing, permissionLabel, formatAge table                                                                             |
+| `render.test.ts`  | tool lines, stats cache visibility + hit % + $, usage summing + unpriced flag, permissionLabel, formatAge table                                                         |
 | `cache.test.ts`   | marker placement; stripCacheControl; fingerprint diffs (incl. marker movement ≠ divergence); ledger verdicts; **two-turn byte-stable prefix invariant through runTurn** |
+| `cost.test.ts`    | rate resolution (exact/date-stripped/unknown); per-counter billing math; cache-rate fallbacks; formatUsd                                                                |
+| `config.test.ts`  | defaults on missing file; pricing/tools/threshold parsing; fail-fast on malformed TOML/values; saveConfigPatch merge preserves other sections; file creation            |
+| `compact.test.ts` | request builder (instruction last, marker on it, tools kept); runCompact happy/empty/error; reducer restart + continuation on top of the summary                        |
 
 Live verification pattern: tmux `send-keys`/`capture-pane` against a real
 TTY (the pty quirks in §7.3 are invisible to piped tests), with traffic
@@ -368,17 +442,19 @@ through aap so the wire side is provable from traces.
 
 ## 11. Environment variables
 
-| Var                                    | Effect                                       |
-| -------------------------------------- | -------------------------------------------- |
-| `ANTHROPIC_API_KEY`                    | credential (or settings.json fallback)       |
-| `ANTHROPIC_BASE_URL`                   | transport target (aap proxy routing)         |
-| `STACKPILOT_MODEL` / `ANTHROPIC_MODEL` | model selection (default `claude-haiku-4-5`) |
-| `NO_COLOR`                             | disable ANSI styling                         |
+| Var                                    | Effect                                               |
+| -------------------------------------- | ---------------------------------------------------- |
+| `ANTHROPIC_API_KEY`                    | credential (or settings.json fallback)               |
+| `ANTHROPIC_BASE_URL`                   | transport target (aap proxy routing)                 |
+| `STACKPILOT_MODEL` / `ANTHROPIC_MODEL` | model selection (default `claude-haiku-4-5`)         |
+| `STACKPILOT_CONFIG`                    | config file path (default ~/.stackpilot/config.toml) |
+| `NO_COLOR`                             | disable ANSI styling                                 |
 
 ## 12. Deliberate omissions (YAGNI until recorded need)
 
 Persistent Bash shell, retries/backoff, MCP, hooks, sandboxing, file
 checkpoints (git worktrees cover it), markdown/diff rendering (P5,
-OpenTUI-vs-Ink pending the Node ≥ 22 decision), multiselect usage (waiting
-for P3 policy toggles), TOML config file (env suffices until the P2 cost
-meter needs pricing tables).
+OpenTUI-vs-Ink pending the Node ≥ 22 decision), comment-preserving TOML
+writer, mid-session model switching (would need the same deferral logic
+as tools — revisit with P3 model routing), auto-compaction in headless
+mode.

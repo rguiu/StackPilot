@@ -122,6 +122,7 @@ export class SessionStore {
     parentUuid: string | null;
     message?: SessionEvent["message"];
     isCompactSummary?: boolean;
+    meta?: Record<string, unknown>;
   }): SessionEvent {
     const full: SessionEvent = {
       ...event,

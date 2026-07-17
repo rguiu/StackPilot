@@ -134,13 +134,51 @@ Haiku's minimum cacheable length until the tool result fattens the prefix.
 Turn 2 paid full price for **3 tokens**. Wire check confirmed breakpoints
 at `system[0]` + last message block.
 
+## P2b — Cost meter, compaction, /config (`87d4d59`, `2889626`, + this commit)
+
+**Cost meter (`87d4d59`):** `~/.stackpilot/config.toml` (smol-toml; 2nd
+runtime dep) with aap-compatible `[pricing]` blocks; `core/cost.ts` rate
+resolution (exact → date-stripped, unknown → null + note, never guess);
+`$` in the stats line, session total in `/usage`. Cross-check: our meter
+**$0.0170** vs aap's independent **$0.017** from raw traces.
+
+**Compaction (`2889626`):** compact request = pure append to the cached
+prefix (tools deliberately KEPT — dropping them would re-bill the history
+at 1.0x instead of 0.1x; `docs/protocol/compaction.md` documents the
+recorded Claude behavior + our divergences). Summary persisted as a
+`isCompactSummary` user event; reducer restarts the conversation at the
+last summary; tree stays append-only. `/compact` + auto-compact at
+`autoCompactAtTokens`. Live (5k threshold): 8.5k-token turn →
+`✂ compacted (auto): 4 messages → 1444-char summary · $0.0026`, next turn
+1613 in with the ledger reporting `cache regen (expected): message[0]`.
+
+**`/config` + tool-set control (this commit):** tools = schema presence =
+head of the cache prefix. `/config` → Tools multiselect (order-preserving
+filter, empty allowed): before the first request applies immediately
+(+ session-only/permanent choice, recorded as a chained `config` event);
+mid-session **never applies** — only "save as default for future
+sessions" (prefix-safe by construction). `/config` → auto-compact
+threshold applies mid-session (prefix-safe) with optional save. `--tools`
+flag for headless A/B. Wire-verified: 5 of 7 schemas on the wire after
+deselecting Write+Bash; deferred save produced
+`[tools] enabled = ["Edit","Grep","Glob","TodoWrite"]`.
+
+**Fifth TTY lesson:** clack prompts pause stdin on close → chained clack
+flows drained the event loop and node exited 0 right after
+"tools enabled" printed (the permission path had survived only because
+`interrupt.arm()` resumes stdin as a side effect). `restoreReadlineTty()`
+now re-asserts raw **and resumes**.
+
+Tests: 83. Gates green.
+
 ## Cumulative state
 
-- ~2,000 LOC src + 6 test suites (55 tests), gates: typecheck / vitest /
+- ~2,700 LOC src + 9 test suites (83 tests), gates: typecheck / vitest /
   prettier all green.
-- One runtime dependency (`@clack/prompts`).
+- Two runtime dependencies (`@clack/prompts`, `smol-toml`).
 - Every feature cost-verified through the aap proxy; golden fixtures pin
-  the reducer and the prefix invariant.
-- Next: **P2b** (pricing config + $ cost meter, `/compact`, auto-compact),
-  then P3 (context policies: tool-result paging, read dedupe, eviction —
-  now with regen-cost prediction), P4 (subagents), P5 (rich rendering).
+  the reducer, the prefix invariant, and the compact boundary; the cost
+  meter is cross-validated against aap's independent implementation.
+- **P2 complete.** Next: P3 (context policies: tool-result paging, read
+  dedupe, eviction — priced ahead of time by the fingerprint diff), P4
+  (subagents), P5 (rich rendering; Node ≥ 22 decision pending).

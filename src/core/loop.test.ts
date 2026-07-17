@@ -113,4 +113,30 @@ describe("runTurn tool_use/tool_result invariant", () => {
     expect(uses).toHaveLength(1);
     expect(resultsFor).toEqual(uses);
   });
+
+  it("rejects a disabled tool without consulting the permission gate", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    const registry = createRegistry();
+    registry.setEnabled(["Read"]); // Bash not enabled
+    let permitCalled = false;
+    let call = 0;
+    const deps: TurnDeps = {
+      store,
+      registry,
+      config,
+      system: "test",
+      io: silentIO(() => {
+        permitCalled = true;
+        return Promise.resolve(true);
+      }),
+      stream: async () =>
+        call++ === 0 ? toolUseResponse() : textResponse("done"),
+    };
+
+    await runTurn(deps, "do something");
+
+    expect(permitCalled).toBe(false);
+    const all = JSON.stringify(store.all());
+    expect(all).toContain("tool disabled for this session: Bash");
+  });
 });

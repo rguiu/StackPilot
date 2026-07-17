@@ -12,6 +12,20 @@ export interface Registry {
   todoState: { todos: TodoItem[] };
   schemas(): { name: string; description: string; input_schema: unknown }[];
   get(name: string): ToolDef | undefined;
+  // Schema presence control (cache-prefix relevant). null = all enabled.
+  // Filtering NEVER reorders: identical subsets → identical prefix bytes.
+  setEnabled(names: readonly string[] | null): void;
+  isEnabled(name: string): boolean;
+  enabledNames(): string[];
+}
+
+// Names in `names` that don't exist in the registry (for fail-fast callers).
+export function unknownToolNames(
+  registry: Registry,
+  names: readonly string[],
+): string[] {
+  const valid = new Set(registry.defs.map((d) => d.name));
+  return names.filter((n) => !valid.has(n));
 }
 
 export function createRegistry(): Registry {
@@ -27,18 +41,32 @@ export function createRegistry(): Registry {
     createTodoTool(todoState),
   ];
   const byName = new Map(defs.map((d) => [d.name, d]));
+  let enabled: ReadonlySet<string> | null = null;
   return {
     defs,
     todoState,
     schemas() {
-      return defs.map((d) => ({
-        name: d.name,
-        description: d.description,
-        input_schema: d.inputSchema,
-      }));
+      return defs
+        .filter((d) => enabled === null || enabled.has(d.name))
+        .map((d) => ({
+          name: d.name,
+          description: d.description,
+          input_schema: d.inputSchema,
+        }));
     },
     get(name) {
       return byName.get(name);
+    },
+    setEnabled(names) {
+      enabled = names === null ? null : new Set(names);
+    },
+    isEnabled(name) {
+      return enabled === null ? byName.has(name) : enabled.has(name);
+    },
+    enabledNames() {
+      return defs
+        .filter((d) => enabled === null || enabled.has(d.name))
+        .map((d) => d.name);
     },
   };
 }

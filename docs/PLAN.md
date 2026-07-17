@@ -78,10 +78,17 @@ control + cost routing — not on feature count.
   client-side fingerprint ledger predicting/verifying hits and regens,
   hit-rate in the stats line, byte-stable prefix invariant test.
   Live: 99% cached on turn 2 of the verification session.
-- **P2b — NEXT:** pricing config + $ cost meter; /compact then
-  auto-compact. Golden-trace replay tests.
-- **P3:** context policies (#10 tool-result paging, #11 read dedupe,
-  #12 stack eviction) + cheap-model routing + A/B via aap compare.
+- **P2b — DONE:** pricing config + $ cost meter (cross-validated against
+  aap: $0.0170 vs $0.017); /compact + auto-compact as append-only
+  isCompactSummary events with prefix-reuse economics; /config (tools
+  multiselect with schema-presence control + prefix-safe deferral rules,
+  auto-compact threshold) + --tools flag.
+- **P3 — NEXT:** context policies (#10 tool-result paging, #11 read
+  dedupe, #12 stack eviction — regen cost priced ahead by the fingerprint
+  diff) + cheap-model routing + A/B via aap compare.
+- **P3 — NEXT:** context policies (#10 tool-result paging, #11 read
+  dedupe, #12 stack eviction — regen cost priced ahead by the fingerprint
+  diff) + cheap-model routing + A/B via aap compare.
 - **P4:** subagents (Task).
 - **P5 (remainder):** rich rendering — markdown, diffs, syntax highlight;
   decide OpenTUI vs Ink (Ink 7 needs Node >= 22; currently on 20).

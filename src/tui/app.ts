@@ -5,7 +5,7 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import { emitKeypressEvents } from "node:readline";
 import process from "node:process";
-import { isCancel, select } from "@clack/prompts";
+import { isCancel, multiselect, select, text } from "@clack/prompts";
 import { CLEAR_LINE, SPINNER_FRAMES, cyan, dim } from "./ansi.js";
 import {
   banner,
@@ -22,7 +22,8 @@ import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
 import { runCompact } from "../core/compact.js";
 import { CacheLedger } from "../core/cache.js";
 import { formatUsd } from "../core/cost.js";
-import type { ModelPricing } from "../config.js";
+import { reduce } from "../core/reducer.js";
+import { saveConfigPatch, type ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
 import type { TransportConfig } from "../transport/anthropic.js";
@@ -106,12 +107,15 @@ class InterruptController {
   }
 }
 
-// clack prompts flip the TTY out of raw mode when they close; the readline
-// Interface expects raw to stay on for its whole lifetime (see the
-// InterruptController notes — kernel echo doubles every subsequent line
-// otherwise). Re-assert after every clack interaction.
+// clack prompts flip the TTY out of raw mode AND pause stdin when they
+// close; the readline Interface expects raw to stay on for its whole
+// lifetime, and a paused TTY stream stops ref'ing the event loop — node
+// then exits 0 mid-await on the next question() (the permission path only
+// survived because interrupt.arm() resumes as a side effect). Re-assert
+// both after every clack interaction.
 function restoreReadlineTty(): void {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdin.resume();
 }
 
 function isAbort(err: unknown): boolean {
@@ -120,7 +124,7 @@ function isAbort(err: unknown): boolean {
 
 export async function runApp(deps: AppDeps): Promise<void> {
   const { store, registry, config, system, pricing } = deps;
-  const autoCompactAtTokens = deps.autoCompactAtTokens ?? 0;
+  const autoCompactState = { value: deps.autoCompactAtTokens ?? 0 };
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const spinner = new Spinner();
   const interrupt = new InterruptController();
@@ -219,6 +223,111 @@ export async function runApp(deps: AppDeps): Promise<void> {
     }
   }
 
+  async function doConfig(): Promise<void> {
+    try {
+      const what = await select({
+        message: "Configure what?",
+        options: [
+          {
+            value: "tools",
+            label: `Tools (${registry.enabledNames().length}/${registry.defs.length} enabled)`,
+          },
+          {
+            value: "compact",
+            label: `Auto-compact threshold (${autoCompactState.value === 0 ? "off" : autoCompactState.value})`,
+          },
+        ],
+      });
+      if (isCancel(what)) return;
+      if (what === "tools") await configTools();
+      else await configThreshold();
+    } finally {
+      restoreReadlineTty();
+    }
+  }
+
+  async function configTools(): Promise<void> {
+    const chosen = await multiselect({
+      message:
+        "Tools sent to the model (schema presence — part of the cache prefix)",
+      options: registry.defs.map((d) => ({
+        value: d.name,
+        label: d.name,
+        hint: d.readOnly ? "read-only" : "mutating",
+      })),
+      initialValues: registry.enabledNames(),
+      required: false,
+    });
+    if (isCancel(chosen)) return;
+    const names = chosen as string[];
+    const requestsSent = turns.some((t) => t.requests > 0);
+
+    if (!requestsSent) {
+      // No prefix established yet — safe to apply now.
+      const scope = await select({
+        message: "Apply how?",
+        options: [
+          { value: "session", label: "This session only" },
+          { value: "permanent", label: "Permanently (save to config file)" },
+        ],
+      });
+      if (isCancel(scope)) return;
+      registry.setEnabled(names);
+      store.append({
+        type: "config",
+        parentUuid: reduce(store.all()).leafUuid,
+        meta: { tools: names },
+      });
+      if (scope === "permanent") {
+        const path = saveConfigPatch({ enabledTools: names }, process.env);
+        console.log(dim(`saved to ${path}`));
+      }
+      console.log(dim(`tools enabled: ${names.join(", ") || "(none)"}`));
+    } else {
+      // Prefix live — a change now would regenerate the whole cache, so
+      // tool changes are deferred to the next session (user decision).
+      const scope = await select({
+        message: "Prefix already established — tool changes apply next session",
+        options: [
+          { value: "permanent", label: "Save as default for future sessions" },
+          { value: "cancel", label: "Cancel" },
+        ],
+      });
+      if (isCancel(scope) || scope === "cancel") return;
+      const path = saveConfigPatch({ enabledTools: names }, process.env);
+      console.log(dim(`saved to ${path} — takes effect next session`));
+    }
+  }
+
+  async function configThreshold(): Promise<void> {
+    const raw = await text({
+      message: "Auto-compact when last request input exceeds (tokens, 0 = off)",
+      initialValue: String(autoCompactState.value),
+      validate: (v) =>
+        /^\d+$/.test((v ?? "").trim())
+          ? undefined
+          : "enter a non-negative integer",
+    });
+    if (isCancel(raw)) return;
+    const value = parseInt(raw.trim(), 10);
+    const scope = await select({
+      message: "Apply how?",
+      options: [
+        { value: "session", label: "This session only (applies immediately)" },
+        { value: "permanent", label: "Permanently (save + apply now)" },
+      ],
+    });
+    if (isCancel(scope)) return;
+    autoCompactState.value = value; // prefix-safe: applies mid-session
+    if (scope === "permanent") {
+      const path = saveConfigPatch({ autoCompactAtTokens: value }, process.env);
+      console.log(dim(`saved to ${path}`));
+    }
+    console.log(
+      dim(`auto-compact: ${value === 0 ? "off" : `at ${value} tokens`}`),
+    );
+  }
+
   for (;;) {
     let line: string;
     try {
@@ -235,6 +344,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
         console.log(todoBox(registry.todoState.todos));
       else if (line === "/usage") console.log(usageSummary(turns));
       else if (line === "/compact") await doCompact("manual");
+      else if (line === "/config") await doConfig();
       else console.log(dim(`unknown command: ${line} (try /help)`));
       continue;
     }
@@ -265,12 +375,12 @@ export async function runApp(deps: AppDeps): Promise<void> {
         process.stdout.write(`${dim(`⚠ ${note}`)}\n`);
       }
       if (
-        autoCompactAtTokens > 0 &&
-        stats.lastRequestInputTokens >= autoCompactAtTokens
+        autoCompactState.value > 0 &&
+        stats.lastRequestInputTokens >= autoCompactState.value
       ) {
         console.log(
           dim(
-            `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactAtTokens} threshold — auto-compacting`,
+            `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactState.value} threshold — auto-compacting`,
           ),
         );
         await doCompact("auto");

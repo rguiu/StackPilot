@@ -206,6 +206,9 @@ async function dispatchTool(
   if (!def) {
     output = `unknown tool: ${use.name}`;
     isError = true;
+  } else if (!registry.isEnabled(use.name)) {
+    output = `tool disabled for this session: ${use.name}`;
+    isError = true;
   } else if (!def.readOnly && !(await io.permit(use.name, input))) {
     output = "user denied permission for this tool call";
     isError = true;

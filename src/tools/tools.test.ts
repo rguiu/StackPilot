@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { editTool, readTool } from "./fs.js";
 import { globToRegExp } from "./search.js";
+import { createRegistry, unknownToolNames } from "./index.js";
 
 const dir = mkdtempSync(join(tmpdir(), "sp-tools-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -86,5 +87,38 @@ describe("globToRegExp", () => {
     ["a?c", "a/c", false],
   ])("%s vs %s → %s", (pattern, path, expected) => {
     expect(globToRegExp(pattern).test(path)).toBe(expected);
+  });
+});
+
+describe("registry enabled-set filtering", () => {
+  it("defaults to all tools enabled", () => {
+    const r = createRegistry();
+    expect(r.schemas()).toHaveLength(r.defs.length);
+    expect(r.isEnabled("Bash")).toBe(true);
+  });
+
+  it("filters schemas preserving canonical order", () => {
+    const r = createRegistry();
+    r.setEnabled(["Glob", "Read"]); // reversed on purpose
+    expect(r.schemas().map((s) => s.name)).toEqual(["Read", "Glob"]);
+    expect(r.enabledNames()).toEqual(["Read", "Glob"]);
+    expect(r.isEnabled("Bash")).toBe(false);
+    expect(r.get("Bash")).toBeDefined(); // catalog unaffected
+  });
+
+  it("supports the empty set and reset to all", () => {
+    const r = createRegistry();
+    r.setEnabled([]);
+    expect(r.schemas()).toHaveLength(0);
+    r.setEnabled(null);
+    expect(r.schemas()).toHaveLength(r.defs.length);
+  });
+
+  it("reports unknown tool names", () => {
+    const r = createRegistry();
+    expect(unknownToolNames(r, ["Read", "Nope", "Bash", "Zap"])).toEqual([
+      "Nope",
+      "Zap",
+    ]);
   });
 });

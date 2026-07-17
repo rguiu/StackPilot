@@ -21,6 +21,7 @@ export function helpText(): string {
     "/todos         show the session todo list",
     "/usage         cumulative tokens + cost this session",
     "/compact       summarize the conversation, restart the stack from it",
+    "/config        tools (multiselect) · auto-compact threshold",
     "/exit          quit",
   ].join("\n");
 }

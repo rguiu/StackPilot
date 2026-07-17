@@ -16,7 +16,7 @@ import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
 import { reduce } from "../core/reducer.js";
 import { SessionStore } from "../session/store.js";
-import { createRegistry } from "../tools/index.js";
+import { createRegistry, unknownToolNames } from "../tools/index.js";
 import { streamMessage } from "../transport/anthropic.js";
 import { runApp } from "../tui/app.js";
 import { formatAge, permissionPromptPlain } from "../tui/render.js";
@@ -26,6 +26,7 @@ interface CliArgs {
   continue_: boolean;
   yolo: boolean;
   model?: string;
+  tools?: string[];
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -36,6 +37,11 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "-c" || a === "--continue") args.continue_ = true;
     else if (a === "--yolo") args.yolo = true;
     else if (a === "--model") args.model = argv[++i];
+    else if (a === "--tools")
+      args.tools = (argv[++i] ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
     else {
       console.error(`unknown argument: ${a}`);
       process.exit(2);
@@ -143,6 +149,18 @@ export async function main(): Promise<void> {
       ? await pickSession(cwd)
       : openStore(cwd, args.continue_);
   const registry = createRegistry();
+  // Precedence: --tools flag > config [tools].enabled > all enabled.
+  const enabledTools = args.tools ?? appConfig.enabledTools;
+  if (enabledTools !== null && enabledTools !== undefined) {
+    const unknown = unknownToolNames(registry, enabledTools);
+    if (unknown.length > 0) {
+      console.error(
+        `stackpilot: unknown tool(s): ${unknown.join(", ")} (valid: ${registry.defs.map((d) => d.name).join(", ")})`,
+      );
+      process.exit(2);
+    }
+    registry.setEnabled(enabledTools);
+  }
   const system = buildSystemPrompt(cwd);
   const ledger = new CacheLedger();
 
