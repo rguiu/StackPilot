@@ -75,7 +75,10 @@ control + cost routing — not on feature count.
 - **P3 (~1-2 wk):** context policies (#10, #11, #12) + cheap-model routing +
   A/B runs via aap compare.
 - **P4:** subagents (Task).
-- **P5:** TUI (decide Ink vs custom then).
+- **P5:** TUI — **shipped early** (after P1): custom inline TUI, zero deps
+  (no Ink/React, per zero-framework convention). Esc-interrupt, spinner,
+  slash commands, colored tool trace. Richer rendering (markdown, diffs)
+  stays future polish.
 
 ## Phase 0 runbook
 

@@ -16,6 +16,7 @@ import { reduce } from "../core/reducer.js";
 import { SessionStore } from "../session/store.js";
 import { createRegistry } from "../tools/index.js";
 import { streamMessage } from "../transport/anthropic.js";
+import { runApp } from "../tui/app.js";
 
 interface CliArgs {
   prompt?: string;
@@ -118,13 +119,21 @@ export async function main(): Promise<void> {
     return;
   }
 
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    await runApp({ store, registry, config, system });
+    return;
+  }
+
+  // Piped stdin (no TTY): plain line-by-line loop, no raw mode, no colors.
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const io = makeIO(rl, args.yolo);
-  console.error(
-    `stackpilot · ${config.model} · session ${store.sessionId.slice(0, 8)} · /exit to quit`,
-  );
   for (;;) {
-    const line = (await rl.question("\n> ")).trim();
+    let line: string;
+    try {
+      line = (await rl.question("\n> ")).trim();
+    } catch {
+      break; // stdin closed
+    }
     if (line === "") continue;
     if (line === "/exit" || line === "/quit") break;
     const stats = await runTurn(

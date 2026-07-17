@@ -26,10 +26,15 @@ export interface TurnDeps {
   config: TransportConfig;
   system: string;
   io: TurnIO;
+  // Optional interrupt (Esc in the TUI). Aborting mid-stream discards the
+  // in-flight assistant turn; the event tree stays consistent because events
+  // are only appended after a request completes.
+  signal?: AbortSignal;
   stream(
     cfg: TransportConfig,
     req: MessagesRequest,
     onText: (d: string) => void,
+    signal?: AbortSignal,
   ): Promise<StreamResult>;
 }
 
@@ -94,6 +99,7 @@ export async function runTurn(
         messages: toApiMessages(reduced.messages),
       },
       io.onText,
+      deps.signal,
     );
     accumulate(stats, result.usage);
 
