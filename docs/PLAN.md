@@ -65,20 +65,25 @@ control + cost routing — not on feature count.
 
 ## Phases
 
-- **P0 Recon (current):** record Claude Code scenarios through aap with
-  Haiku; extract protocol docs + golden fixtures. See runbook below.
-- **P1 (~1 wk):** REPL + streaming loop + Read/Write/Edit/Bash/Grep/Glob/
-  TodoWrite + y/n permissions + JSONL event log + resume. Runs through the
-  aap proxy by default.
-- **P2 (~1 wk):** cache breakpoints + append-only discipline + live cost
-  meter + /compact then auto-compact. Golden-trace replay tests (vitest).
-- **P3 (~1-2 wk):** context policies (#10, #11, #12) + cheap-model routing +
-  A/B runs via aap compare.
+- **P0 Recon — DONE:** 5 scenarios recorded through aap (haiku); protocol
+  docs + golden fixtures extracted. Missing: an organic auto-compact trace,
+  compaction.md/reminders.md deep-dive (sp-compact trace is on disk).
+- **P1 — DONE (v0.1):** REPL/TUI + streaming loop + 7 tools + permission
+  gate + JSONL event tree + resume. Reducer replays Claude transcripts
+  bit-exact. Dogfooded through the aap proxy.
+- **P1.5 TUI — DONE (pulled forward from P5):** custom inline TUI +
+  @clack/prompts widgets: permission select with session allowlist,
+  -c session picker, Esc interrupt, spinner, slash commands.
+- **P2 — NEXT:** cache_control breakpoints + append-only prefix discipline
+  (byte-stable prefix test) + live cost meter (pricing TOML) + /compact
+  then auto-compact. Golden-trace replay tests.
+- **P3:** context policies (#10 tool-result paging, #11 read dedupe,
+  #12 stack eviction) + cheap-model routing + A/B via aap compare.
 - **P4:** subagents (Task).
-- **P5:** TUI — **shipped early** (after P1): custom inline TUI, zero deps
-  (no Ink/React, per zero-framework convention). Esc-interrupt, spinner,
-  slash commands, colored tool trace. Richer rendering (markdown, diffs)
-  stays future polish.
+- **P5 (remainder):** rich rendering — markdown, diffs, syntax highlight;
+  decide OpenTUI vs Ink (Ink 7 needs Node >= 22; currently on 20).
+  Also: stream-json headless output, thinking-budget pass-through,
+  deny-with-feedback on permission prompts.
 
 ## Phase 0 runbook
 
