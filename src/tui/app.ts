@@ -77,12 +77,14 @@ class InterruptController {
     process.stdin.resume();
   }
 
+  // NOTE: never pause stdin here. readline owns the stream between turns; a
+  // paused TTY stream stops ref'ing the event loop and node exits mid-await
+  // on the next question(). We only detach our listener and drop raw mode.
   disarm(): void {
     if (!this.active) return;
     this.active = false;
     process.stdin.off("keypress", this.onKeypress);
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
-    process.stdin.pause();
   }
 
   reset(): void {
