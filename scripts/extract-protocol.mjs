@@ -11,6 +11,7 @@
 
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
+import { createHash } from "node:crypto";
 
 const [traceDir, outDir] = process.argv.slice(2);
 if (!traceDir || !outDir) {
@@ -60,16 +61,32 @@ const sys = Array.isArray(main.json.system)
   ? main.json.system
   : [{ type: "text", text: String(main.json.system ?? "") }];
 const sysMd = [
-  `# System prompt (${main.file}, model ${main.json.model})`,
+  `# System prompt structure (${main.file}, model ${main.json.model})`,
   "",
-  ...sys.flatMap((block, i) => [
-    `## Block ${i}${block.cache_control ? ` — cache_control: ${JSON.stringify(block.cache_control)}` : ""}`,
-    "",
-    "````text",
-    block.text ?? JSON.stringify(block, null, 2),
-    "````",
-    "",
-  ]),
+  "Block layout, sizes, cache_control placement, and section inventory only —",
+  "verbatim prompt text is deliberately not reproduced here. Hashes let you",
+  "verify a block against your own recordings.",
+  "",
+  "| block | cache_control | chars | lines | sha256:12 |",
+  "| --- | --- | --- | --- | --- |",
+  ...sys.map((block, i) => {
+    const text = block.text ?? JSON.stringify(block);
+    const cc = block.cache_control
+      ? `\`${JSON.stringify(block.cache_control)}\``
+      : "—";
+    const hash = createHash("sha256").update(text).digest("hex").slice(0, 12);
+    return `| ${i} | ${cc} | ${text.length} | ${text.split("\n").length} | \`${hash}\` |`;
+  }),
+  "",
+  ...sys.flatMap((block, i) => {
+    const headings = (block.text ?? "")
+      .split("\n")
+      .filter((l) => /^#{1,3} /.test(l))
+      .map((l) => `- \`${l.trim()}\``);
+    return headings.length
+      ? [`## Block ${i} — section inventory`, "", ...headings, ""]
+      : [];
+  }),
 ].join("\n");
 writeFileSync(join(outDir, "system-prompt.md"), sysMd);
 
