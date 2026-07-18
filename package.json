@@ -43,7 +43,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.9.4",
-    "tsx": "^4.23.0",
+    "tsx": "4.23.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.64.0",
     "vitest": "^4.1.9"
@@ -52,5 +52,8 @@
     "@clack/prompts": "^1.7.0",
     "better-sqlite3": "^12.11.1",
     "smol-toml": "^1.7.0"
+  },
+  "bin": {
+    "stackpilot": "dist/cli/main.js"
   }
 }

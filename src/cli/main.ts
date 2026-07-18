@@ -8,7 +8,9 @@
 //   stackpilot --model <id>    override model
 
 import { createInterface, type Interface } from "node:readline/promises";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { isCancel, select } from "@clack/prompts";
 import { loadAppConfig, ConfigError } from "../config.js";
@@ -382,9 +384,20 @@ export async function main(): Promise<void> {
   await fireSessionEnd();
 }
 
-const isDirect =
-  process.argv[1] !== undefined &&
-  import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "");
+// Entry detection must survive three launch shapes: `tsx src/cli/main.ts`
+// (argv[1] = .ts file), `node dist/cli/main.js`, and the npm bin shim
+// (argv[1] = a SYMLINK named `stackpilot`). Name-suffix comparison fails
+// the symlink case — main() silently never ran and the process exited 0 —
+// so resolve the real path and compare canonical file URLs.
+const isDirect = ((): boolean => {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return pathToFileURL(realpathSync(entry)).href === import.meta.url;
+  } catch {
+    return false;
+  }
+})();
 if (isDirect) {
   main().catch((err: unknown) => {
     console.error(

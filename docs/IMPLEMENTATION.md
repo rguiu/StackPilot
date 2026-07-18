@@ -377,6 +377,16 @@ exact `y`/`yes` only.
 4. **Exact-match approvals.** Type-ahead during streaming lands in the next
    prompt; `startsWith("y")` could auto-approve a mutation from buffered
    noise.
+5. **Don't run the interactive stack on a transpiler runtime.** tsx
+   silently drifted 4.23.0 → 4.23.1 overnight (caret range + npx cache)
+   and broke readline TTY handling — "stuck" input, Enter not submitting,
+   arrows inserted literally. Bare `node` was unaffected. Runtime is now
+   exact-pinned AND the primary launch path is the compiled `stackpilot`
+   bin on plain node (tsx stays dev-only).
+6. **Entry guards must survive symlinked bins.** npm bin shims are
+   symlinks named after the command; comparing `import.meta.url` against
+   `argv[1]`'s basename made `main()` silently never run (clean exit 0).
+   Compare canonical file URLs via `realpathSync` instead.
 
 ## 8. CLI (`src/cli/main.ts`)
 
