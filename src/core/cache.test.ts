@@ -15,7 +15,9 @@ import { createRegistry } from "../tools/index.js";
 import type { MessagesRequest, StreamResult } from "../transport/anthropic.js";
 
 const home = mkdtempSync(join(tmpdir(), "sp-cache-"));
-afterAll(() => rmSync(home, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 const msg = (
   role: "user" | "assistant",
@@ -168,7 +170,7 @@ describe("two-turn byte-stable prefix invariant (through runTurn)", () => {
       onText: () => {},
       onToolStart: () => {},
       onToolEnd: () => {},
-      permit: () => Promise.resolve(true),
+      permit: () => Promise.resolve({ allowed: true }),
     };
     const deps: TurnDeps = {
       store,

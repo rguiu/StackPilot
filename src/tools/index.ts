@@ -2,10 +2,16 @@
 // Messages API, and dispatch.
 
 import { editTool, readTool, writeTool } from "./fs.js";
+import { patchTool } from "./patch.js";
 import { bashTool } from "./shell.js";
 import { globTool, grepTool } from "./search.js";
 import { searchHistoryTool } from "./history.js";
 import { createTodoTool, type TodoItem } from "./todo.js";
+import { createSkillTool, type SkillInfo } from "./skill.js";
+import { createSearchMemoryTool, createSearchFilesTool } from "./memory.js";
+import { createReadMoreTool } from "./readmore.js";
+import { createAgentTool, type AgentState } from "./agent.js";
+import type { SessionState } from "../core/policies.js";
 import { ToolInputError, type ToolDef, type ToolResult } from "./types.js";
 
 export interface Registry {
@@ -29,19 +35,38 @@ export function unknownToolNames(
   return names.filter((n) => !valid.has(n));
 }
 
-export function createRegistry(): Registry {
+export function createRegistry(
+  skills?: Map<string, SkillInfo>,
+  memoryDb?: import("better-sqlite3").Database,
+  sessionState?: SessionState,
+  agentState?: AgentState,
+): Registry {
   const todoState = { todos: [] as TodoItem[] };
   // Order is part of the cache prefix — append new tools at the END only.
   const defs: ToolDef[] = [
     readTool,
     writeTool,
     editTool,
+    patchTool,
     bashTool,
     grepTool,
     globTool,
     createTodoTool(todoState),
     searchHistoryTool,
   ];
+  if (skills && skills.size > 0) {
+    defs.push(createSkillTool(skills));
+  }
+  if (memoryDb) {
+    defs.push(createSearchMemoryTool(memoryDb));
+    defs.push(createSearchFilesTool(memoryDb));
+  }
+  if (sessionState) {
+    defs.push(createReadMoreTool(sessionState));
+  }
+  if (agentState) {
+    defs.push(createAgentTool(agentState));
+  }
   const byName = new Map(defs.map((d) => [d.name, d]));
   let enabled: ReadonlySet<string> | null = null;
   return {

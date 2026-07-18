@@ -2,29 +2,55 @@
   "name": "stackpilot",
   "version": "0.1.0",
   "type": "module",
-  "description": "A lean, cost-optimal coding agent with a fully controllable message stack. Behavioral study of Claude Code, rebuilt smaller.",
+  "description": "A lean, cost-optimal coding agent with a fully controllable message stack. Behavioral clone of Claude Code, rebuilt smaller.",
   "license": "MIT",
   "private": true,
+  "author": "Raul Guiu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rguiu/stackpilot.git"
+  },
+  "keywords": [
+    "claude-code",
+    "coding-agent",
+    "llm",
+    "anthropic",
+    "tui",
+    "prompt-caching",
+    "ai-agent-profiler"
+  ],
   "scripts": {
     "dev": "tsx src/cli/main.ts",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.0",
+    "@typescript-eslint/parser": "^8.64.0",
+    "eslint": "^10.7.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.9.4",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.64.0",
     "vitest": "^4.1.9"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
+    "better-sqlite3": "^12.11.1",
     "smol-toml": "^1.7.0"
   }
 }

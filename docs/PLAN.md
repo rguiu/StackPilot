@@ -88,29 +88,92 @@ control + cost routing — not on feature count.
   isCompactSummary events with prefix-reuse economics; /config (tools
   multiselect with schema-presence control + prefix-safe deferral rules,
   auto-compact threshold) + --tools flag.
-- **P3 — NEXT:** context policies (#10 tool-result paging, #11 read
-  dedupe, #12 stack eviction — regen cost priced ahead by the fingerprint
-  diff) + cheap-model routing + A/B via aap compare.
-- **P3 — NEXT:** context policies (#10 tool-result paging, #11 read
-  dedupe, #12 stack eviction — regen cost priced ahead by the fingerprint
-  diff) + cheap-model routing + A/B via aap compare.
-- **P4:** subagents (Task).
-- **P5 (remainder):** rich rendering — markdown, diffs, syntax highlight;
-  decide OpenTUI vs Ink (Ink 7 needs Node >= 22; currently on 20).
-  Also: stream-json headless output, thinking-budget pass-through,
-  deny-with-feedback on permission prompts.
+- **P3a — DONE:** instruction system + system prompt + hooks + session memory
+  - CLAUDE.md hierarchical loading (walk from cwd → git root + ~/.stackpilot/)
+  - System prompt enrichment (git context, platform, security guardrails, coding conventions)
+  - Hooks v1: pre-tool + post-tool (advisory, fail-open, 5s timeout)
+  - SKILL.md loading + Skill tool (`.stackpilot/skills/<name>/SKILL.md`)
+  - Tier 2 session memory: structured metadata index at `~/.stackpilot/memory/`
+- **P3b — DONE:** context policies (#10 tool-result paging, #11 read dedupe, #12 stack eviction
+  — regen cost priced ahead by the fingerprint diff) + cheap-model routing +
+  A/B via aap compare + richer Grep schema + third cache breakpoint.
+- **P4 — DONE:** subagents (Agent tool, isolated context sidechains, explore/general types).
+- **P5 — DONE:** rich rendering — streaming markdown, diff colorization, inline code blocks;
+  stream-json headless output (`--json`); thinking-budget pass-through;
+  deny-with-feedback on permission prompts; `!` prefix for direct shell commands.
+
+## P3a design decisions
+
+| Decision               | Choice                                                          | Rationale                                                            |
+| ---------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| CLAUDE.md walk-up stop | Git root + `~/.stackpilot/CLAUDE.md`                            | Project scope stops at repo boundary; user preferences at home       |
+| CLAUDE.md filename     | `.stackpilot/CLAUDE.md` preferred, bare `CLAUDE.md` as fallback | Namespaced by default, compatible with existing Claude Code projects |
+| CLAUDE.md re-read      | Once at session start                                           | Cache stability: same system prompt = same prefix = cache hit        |
+| Hook points v1         | pre_tool + post_tool + session_start + session_end              | Full lifecycle coverage; stdout → system-reminder for model context  |
+| Hook I/O               | JSON on stdin + env vars                                        | Rich structure, trivially consumed by any scripting language         |
+| Hook fail mode         | Fail-open (log, continue)                                       | Advisory initially; configurable later (`onFailure: "warn"           | "block"`) |
+| Hook timeout           | 5s hard limit, SIGKILL                                          | Predictable, won't stall the agent                                   |
+| Hook output routing    | stdout → both system-reminder + terminal                        | Model sees context; user sees status. Per-hook routing deferred.     |
+| Hook config            | `config.toml` `[hooks]` section                                 | Single config surface                                                |
+| Per-tool overrides     | **Deferred.** `hooks.pre_tool.Bash` would override global.      | Not in v1; single global hook per point.                             |
+| Multi-script hooks     | **Deferred.** `command = ["lint.sh", "format.sh"]` arrays.      | Single `command` string per hook point for v1. Array support later.  |
+
+### Future hook extensions (documented, not implemented)
+
+Additional hook points that fit the runner infrastructure without changes:
+
+| Hook Point           | Trigger                                                        | Use case                                                     |
+| -------------------- | -------------------------------------------------------------- | ------------------------------------------------------------ |
+| `user_prompt_submit` | User submits a prompt                                          | Inject context, check for banned commands, redirect to skill |
+| `pre_compact`        | Before session compaction                                      | Snapshot state, capture decisions before summarization       |
+| `post_compact`       | After session compaction                                       | Update memory index with decisions from compacted context    |
+| `pre_turn`           | Before model processes user message                            | Inject dynamic git diff, file drift warnings                 |
+| `post_turn`          | After model response + tools                                   | Desktop notification, capture decisions, update task list    |
+| `notification`       | After significant events                                       | Conditional push/Slack/email (separate from post_turn)       |
+| Skill directory      | `.stackpilot/skills/<name>/SKILL.md` + `~/.stackpilot/skills/` | Project-level wins, user-level fallback                      |
+| Skill invocation     | Skill tool (model can self-invoke)                             | Let the model decide when to use skills                      |
+| Session memory index | `~/.stackpilot/memory/`                                        | Local, portable, survives proxy restarts                     |
+| Memory extraction    | On session close via post-turn hook                            | Natural lifecycle, no polling                                |
 
 ## Phase 0 runbook
 
-Recording (Haiku, all aliases pinned in `~/.claude/settings.json`):
+StackPilot was built by recording Claude Code's wire behavior through the
+[ai-agent-profiler](https://github.com/anomalyco/ai-agent-profiler) (`aap`) — a
+local reverse proxy that sits between any LLM client and the API, capturing
+request/response pairs, measuring token usage and cache behavior, and indexing
+everything in a FTS5 database for later analysis.
 
 ```bash
-# terminal 1
-aap serve
+# Clone and run from source (no npm package yet)
+git clone https://github.com/rguiu/ai-agent-profiler
+cd ai-agent-profiler
+npm install
+npm run dev
+# → Listening on http://127.0.0.1:8080
+# → Proxies to https://api.anthropic.com
 
-# terminal 2, per scenario (scripted where possible)
-aap run --meta scenario=<name> claude ...
+# In another terminal, record a session:
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic claude
+
+# Or use the aap CLI (from the same repo) to tag sessions:
+npx tsx src/cli/aap.ts run --meta scenario=edit-loop claude "fix the bug"
+
+# StackPilot runs through aap for cost verification:
+aap run npx tsx path/to/stackpilot/src/cli/main.ts
 ```
+
+Aap provides:
+
+- **Recording:** every request/response body, headers, timing, and cost, saved as
+  NDJSON trace files
+- **Comparison:** `aap compare --base <ref> --head <exp>` for A/B testing context
+  policies
+- **FTS search:** FTS5 index of all recorded sessions — the backing store for
+  StackPilot's `SearchHistory` tool
+- **Cost verification:** independent token/cost counters cross-validated against
+  StackPilot's own cost meter
+
+Recording (Haiku, all aliases pinned in `~/.claude/settings.json`):
 
 | Scenario           | What it exercises                            | Status   |
 | ------------------ | -------------------------------------------- | -------- |

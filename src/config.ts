@@ -11,10 +11,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import type { TransportConfig } from "./transport/anthropic.js";
+import type { TransportConfig, RetryConfig } from "./transport/anthropic.js";
+import { DEFAULT_RETRY } from "./transport/anthropic.js";
+import type { HookConfig } from "./core/hooks.js";
 
 export const DEFAULT_MODEL = "claude-haiku-4-5";
 export const DEFAULT_AUTO_COMPACT_AT_TOKENS = 160_000;
+export const DEFAULT_MAX_TOOL_RESULT_CHARS = 10_000;
 
 export class ConfigError extends Error {}
 
@@ -28,10 +31,15 @@ export interface ModelPricing {
 export interface AppConfig {
   transport: TransportConfig;
   pricing: Record<string, ModelPricing>;
-  // null = all registry tools enabled.
   enabledTools: string[] | null;
-  // 0 disables auto-compaction.
   autoCompactAtTokens: number;
+  hooks: {
+    preTool?: HookConfig;
+    postTool?: HookConfig;
+    sessionStart?: HookConfig;
+    sessionEnd?: HookConfig;
+  };
+  maxToolResultChars: number;
 }
 
 export function configPath(
@@ -74,6 +82,11 @@ export function resolveConfig(
       env.ANTHROPIC_MODEL ??
       DEFAULT_MODEL,
     maxTokens: 8192,
+    retry: DEFAULT_RETRY,
+    cheapModel: env.STACKPILOT_CHEAP_MODEL ?? undefined,
+    thinkingBudgetTokens: env.STACKPILOT_THINKING_BUDGET
+      ? parseInt(env.STACKPILOT_THINKING_BUDGET, 10)
+      : undefined,
   };
 }
 
@@ -87,7 +100,7 @@ function readTomlFile(path: string): Record<string, unknown> | null {
     return null; // missing file is not an error
   }
   try {
-    return parseToml(raw) as Record<string, unknown>;
+    return parseToml(raw);
   } catch (err) {
     throw new ConfigError(`invalid TOML in ${path}: ${(err as Error).message}`);
   }
@@ -144,6 +157,74 @@ function parseEnabledTools(raw: unknown, path: string): string[] | null {
   return tools as string[];
 }
 
+function parseRetry(raw: unknown, path: string): RetryConfig | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`[retry] must be a table in ${path}`);
+  }
+  const r = raw as Record<string, unknown>;
+  const config: RetryConfig = { ...DEFAULT_RETRY };
+  if (r.maxRetries !== undefined) {
+    config.maxRetries = asFiniteNumber(r.maxRetries, "[retry].maxRetries");
+  }
+  if (r.baseDelayMs !== undefined) {
+    config.baseDelayMs = asFiniteNumber(r.baseDelayMs, "[retry].baseDelayMs");
+  }
+  if (r.maxDelayMs !== undefined) {
+    config.maxDelayMs = asFiniteNumber(r.maxDelayMs, "[retry].maxDelayMs");
+  }
+  return config;
+}
+
+function parseHooks(
+  raw: unknown,
+  path: string,
+): {
+  preTool?: HookConfig;
+  postTool?: HookConfig;
+  sessionStart?: HookConfig;
+  sessionEnd?: HookConfig;
+} {
+  if (raw === undefined) return {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`[hooks] must be a table in ${path}`);
+  }
+  const h = raw as Record<string, unknown>;
+  const out: {
+    preTool?: HookConfig;
+    postTool?: HookConfig;
+    sessionStart?: HookConfig;
+    sessionEnd?: HookConfig;
+  } = {};
+
+  function parseOne(
+    key: string,
+    target: "preTool" | "postTool" | "sessionStart" | "sessionEnd",
+  ): void {
+    const section = h[key] as Record<string, unknown> | undefined;
+    if (section === undefined) return;
+    if (typeof section.command !== "string" || section.command.length === 0) {
+      throw new ConfigError(
+        `[hooks.${key}].command must be a non-empty string`,
+      );
+    }
+    out[target] = {
+      command: section.command,
+      timeoutMs:
+        section.timeoutMs !== undefined
+          ? asFiniteNumber(section.timeoutMs, `[hooks.${key}].timeoutMs`)
+          : 5000,
+    };
+  }
+
+  parseOne("pre_tool", "preTool");
+  parseOne("post_tool", "postTool");
+  parseOne("session_start", "sessionStart");
+  parseOne("session_end", "sessionEnd");
+
+  return out;
+}
+
 export function loadAppConfig(
   env: NodeJS.ProcessEnv,
   overrides: { model?: string } = {},
@@ -162,11 +243,30 @@ export function loadAppConfig(
     throw new ConfigError("autoCompactAtTokens must be >= 0 (0 disables)");
   }
 
+  const retryOverride = parseRetry(file.retry, path);
+  if (retryOverride) transport.retry = retryOverride;
+
+  if (typeof file.cheapModel === "string" && file.cheapModel.length > 0) {
+    transport.cheapModel = file.cheapModel;
+  }
+
+  if (typeof file.thinkingBudgetTokens === "number") {
+    transport.thinkingBudgetTokens = file.thinkingBudgetTokens;
+  }
+
+  const maxRaw = file.maxToolResultChars;
+  const maxToolResultChars =
+    maxRaw === undefined
+      ? DEFAULT_MAX_TOOL_RESULT_CHARS
+      : asFiniteNumber(maxRaw, "maxToolResultChars");
+
   return {
     transport,
     pricing: parsePricing(file.pricing, path),
     enabledTools: parseEnabledTools(file.tools, path),
     autoCompactAtTokens,
+    hooks: parseHooks(file.hooks, path),
+    maxToolResultChars,
   };
 }
 

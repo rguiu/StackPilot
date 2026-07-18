@@ -13,7 +13,9 @@ import { createRegistry } from "../tools/index.js";
 import type { StreamResult } from "../transport/anthropic.js";
 
 const home = mkdtempSync(join(tmpdir(), "sp-compact-"));
-afterAll(() => rmSync(home, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 const config = {
   baseUrl: "http://x",

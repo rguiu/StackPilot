@@ -8,7 +8,9 @@ import { createRegistry } from "../tools/index.js";
 import type { StreamResult } from "../transport/anthropic.js";
 
 const home = mkdtempSync(join(tmpdir(), "sp-loop-"));
-afterAll(() => rmSync(home, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 const silentIO = (permit: TurnIO["permit"]): TurnIO => ({
   onText: () => {},
@@ -88,7 +90,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry: createRegistry(),
       config,
       system: "test",
-      io: silentIO(() => Promise.resolve(false)), // deny → still produces a result
+      io: silentIO(() => Promise.resolve({ allowed: false })), // deny → still produces a result
       stream: async () =>
         call++ === 0 ? toolUseResponse() : textResponse("done"),
     };
@@ -127,7 +129,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       system: "test",
       io: silentIO(() => {
         permitCalled = true;
-        return Promise.resolve(true);
+        return Promise.resolve({ allowed: true });
       }),
       stream: async () =>
         call++ === 0 ? toolUseResponse() : textResponse("done"),

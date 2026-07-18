@@ -7,7 +7,9 @@ import { globToRegExp } from "./search.js";
 import { createRegistry, unknownToolNames } from "./index.js";
 
 const dir = mkdtempSync(join(tmpdir(), "sp-tools-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe("Read", () => {
   it("numbers lines from offset", async () => {

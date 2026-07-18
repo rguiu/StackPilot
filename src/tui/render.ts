@@ -148,9 +148,66 @@ export function permissionPromptPlain(
   name: string,
   input: Record<string, unknown>,
 ): string {
-  return `${yellow("?")} ${permissionLabel(name, input)} ${dim("[y/N]")} `;
+  return `${yellow("?")} ${permissionLabel(name, input)} ${dim("[y/N/feedback]")} `;
 }
 
 export function interrupted(): string {
   return yellow("· interrupted (partial turn discarded)");
+}
+
+// --- Diff rendering --------------------------------------------------------
+
+export function diffLine(line: string): string {
+  if (line.startsWith("+")) return green(line);
+  if (line.startsWith("-")) return red(line);
+  if (line.startsWith("@@")) return cyan(line);
+  if (line.startsWith("---") || line.startsWith("+++")) return bold(line);
+  return dim(line);
+}
+
+export function renderDiff(patch: string, limit = 30): string {
+  const lines = patch.split("\n");
+  const head = lines.slice(0, limit);
+  const suffix =
+    lines.length > limit
+      ? `\n${dim(`… ${lines.length - limit} more lines`)}`
+      : "";
+  return head.map(diffLine).join("\n") + suffix;
+}
+
+// --- Rich tool output ------------------------------------------------------
+
+export function richToolOutput(
+  toolName: string,
+  output: string,
+  isError: boolean,
+): string {
+  if (isError) {
+    const first = output.split("\n").slice(0, 3).join("\n");
+    return red(`✗ ${toolName}: ${first}`);
+  }
+
+  if (toolName === "Edit" || toolName === "Patch") {
+    return renderDiff(output);
+  }
+
+  if (toolName === "Read" || toolName === "Grep") {
+    const lines = output.split("\n");
+    if (lines.length <= 15) return dim(output);
+    const head = lines.slice(0, 12).join("\n");
+    const tail = lines.slice(-3).join("\n");
+    return `${dim(head)}\n${dim("  …")}\n${dim(tail)}\n${dim(`${lines.length} lines total`)}`;
+  }
+
+  if (toolName === "Write") {
+    return green(`✓ ${output}`);
+  }
+
+  if (output.length > 500) {
+    return dim(
+      output.slice(0, 500) + `\n${dim(`… ${output.length - 500} more chars`)}`,
+    );
+  }
+
+  return output;
 }

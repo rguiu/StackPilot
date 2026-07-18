@@ -207,3 +207,114 @@ $0.0051.
 - **P2 complete.** Next: P3 (context policies: tool-result paging, read
   dedupe, eviction — priced ahead of time by the fingerprint diff), P4
   (subagents), P5 (rich rendering; Node ≥ 22 decision pending).
+
+## P3a — Instructions, hooks, skills, session memory
+
+**CLAUDE.md loading (`src/core/instructions.ts`).** Walks from `cwd` up
+to git root, loads `.stackpilot/CLAUDE.md` (preferred) or bare `CLAUDE.md`
+at each level, then `~/.stackpilot/CLAUDE.md` for user-level. Injected
+into the system prompt at session start.
+
+**System prompt enrichment (`src/core/prompt.ts`).** Expanded from 400 chars
+(5 rules) to ~2KB with git context snapshot (branch, status, recent commits),
+platform info, security guardrails, coding conventions, tool usage policy,
+and CLAUDE.md injection point.
+
+**Hooks (`src/core/hooks.ts`).** Shell commands at 4 lifecycle points:
+`pre_tool`, `post_tool`, `session_start`, `session_end`. JSON context on
+stdin, env vars, 5s timeout, fail-open. stdout fed to the model as
+`<system-reminder>`.
+
+**Skills (`src/tools/skill.ts`).** YAML-frontmatter SKILL.md files in
+`.stackpilot/skills/<name>/SKILL.md`. Project-level overrides user-level.
+Listed in the system prompt. Skill tool (read-only) loads skill content
+on demand.
+
+**Session memory (`src/tools/memory.ts`).** SQLite index at
+`~/.stackpilot/memory/index.db` (FTS5). Extracts session metadata on close:
+files touched, errors, commands, first prompt. `SearchMemory` and
+`SearchFiles` tools expose the index.
+
+**Patch tool (`src/tools/patch.ts`).** Unified diff application.
+Multi-hunk, context-verified. Alternative to Edit for small changes
+with fewer tokens.
+
+**Richer Grep schema.** Extended from 3 to 9 parameters: `-i`, `-A`/`-B`/`-C`,
+`head_limit`, `output_mode` (content/files_with_matches/count).
+
+**Third cache breakpoint.** System prompt split into 2 cache blocks —
+static rules and dynamic instructions — so a CLAUDE.md change only
+invalidates the dynamic block.
+
+## P3b — Context policies
+
+**Tool-result paging (`src/core/policies.ts`).** Tool outputs >10k chars
+are truncated in the message stack and stored in `SessionState.pagedOutputs`.
+`ReadMore` tool (`src/tools/readmore.ts`) expands them by `tool_use_id`
+with offset/limit.
+
+**Read deduplication.** SHA-hash-based detection of unchanged file reads.
+Repeated reads of identical content are replaced with `[unchanged]` summary.
+
+**Stack eviction.** Drops tool_results older than 5 turns from the API
+message stack, keeping recent context compact.
+
+**Small-model routing.** `cheapModel` config routes compaction to a cheaper
+model (e.g. Haiku) while primary reasoning uses the main model.
+
+## P4 — Subagents
+
+**Subagent runner (`src/core/subagent.ts`).** Isolated turn loop with
+own messages array. Explore type gets read-only tools; general type gets
+all tools. Max 10 iterations per subagent. Returns text result + usage stats.
+
+**Agent tool (`src/tools/agent.ts`).** `{ description, prompt, subagent_type }`.
+Synchronous — blocks until the subagent completes. Output includes the
+subagent's text response and token/tool usage summary.
+
+## P5 — Rich rendering
+
+**Markdown stream renderer (`src/tui/markdown.ts`).** Stateful renderer
+handles streaming text deltas. Headers, code blocks (numbered lines, dim
+background), inline code, bold/italic/links, blockquotes, horizontal rules,
+lists. Renders to ANSI-formatted terminal output.
+
+**Diff rendering (`src/tui/render.ts`).** Colorized `+` (green) / `-` (red)
+lines, hunk headers (cyan), truncation with line count. Edit/Patch output
+rendered as diffs.
+
+**Rich tool output.** Read/Grep auto-truncate with line count. Write shows
+green check. Long outputs truncated with char count.
+
+**ANSI extensions.** `blue`, `white`, `gray`, `underline`, `bgRed`,
+`bgGreen`, `bgCyan`, `bgGray` added to `src/tui/ansi.ts`.
+
+**Thinking-budget pass-through.** `thinkingBudgetTokens` in config and
+`$STACKPILOT_THINKING_BUDGET` env. Passes `{ type: "enabled", budget_tokens: N }`
+in the API body.
+
+**Deny-with-feedback.** `TurnIO.permit` returns `{ allowed, reason? }`.
+TUI: "Deny (with feedback)" option → text input. CLI: type `no reason`
+to give feedback. Feedback appears in tool_result.
+
+**stream-json headless output.** `--json` flag emits JSON lines
+(`{"type":"text"|"tool_start"|"tool_end"|"turn_end", ...}`) for scripting.
+
+**`!` prefix for direct shell commands.** `!ls` runs the command directly
+via `bash -c` without calling the model. Works in TUI and piped stdin modes.
+
+## Cumulative state
+
+- 14 tools: Read, Write, Edit, Patch, Bash, Grep, Glob, TodoWrite,
+  SearchHistory, Skill, Agent, SearchMemory, SearchFiles, ReadMore
+- 3 runtime dependencies: @clack/prompts, better-sqlite3, smol-toml
+- 10 test suites, 90 tests, all green
+- ESLint + Prettier + husky pre-commit hook
+- Full CLAUDE.md / SKILL.md instruction system
+- 4 hook points: pre_tool, post_tool, session_start, session_end
+- SQLite session memory with FTS5 search
+- Context policies: paging, deduplication, eviction
+- 3 of 4 Anthropic cache breakpoints with client fingerprint ledger
+- Fixed-screen TUI with streaming markdown, diff rendering, markdown
+- stream-json + thinking-budget + deny-with-feedback + ! shell prefix
+- **P0-P5 complete.**

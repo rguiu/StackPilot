@@ -1,10 +1,11 @@
 # stackpilot — Implementation Reference
 
-Accurate as of P2b (`cost`, `compact`, `/config` commits). Companion docs:
-[PLAN.md](PLAN.md) (roadmap, feature verdicts),
-[CHANGELOG.md](CHANGELOG.md) (chronological record with evidence), and
-[protocol/](protocol/) (recorded Claude Code wire behavior this design is
-based on).
+> **Frozen at P2b.** This document accurately describes the architecture
+> through v0.1.0 (cache, cost, compact, config). For the current state
+> (14 tools, hooks, skills, subagents, context policies, markdown
+> rendering, and all P3-P5 features), see [README.md](../README.md).
+> [protocol/](protocol/) (recorded Claude Code wire behavior this design is
+> based on).
 
 ---
 

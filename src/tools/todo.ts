@@ -42,10 +42,13 @@ export function createTodoTool(state: { todos: TodoItem[] }): ToolDef {
       },
       required: ["todos"],
     },
-    async execute(input): Promise<ToolResult> {
+    execute(input): Promise<ToolResult> {
       const raw = input.todos;
       if (!Array.isArray(raw)) {
-        return { output: '"todos" must be an array', isError: true };
+        return Promise.resolve({
+          output: '"todos" must be an array',
+          isError: true,
+        });
       }
       const next: TodoItem[] = [];
       for (const item of raw) {
@@ -55,11 +58,11 @@ export function createTodoTool(state: { todos: TodoItem[] }): ToolDef {
           typeof rec.status !== "string" ||
           !VALID_STATUS.has(rec.status)
         ) {
-          return {
+          return Promise.resolve({
             output:
               "each todo needs {content: string, status: pending|in_progress|completed}",
             isError: true,
-          };
+          });
         }
         next.push({
           content: rec.content,
@@ -67,7 +70,9 @@ export function createTodoTool(state: { todos: TodoItem[] }): ToolDef {
         });
       }
       state.todos = next;
-      return { output: `todos updated:\n${formatTodos(next)}` };
+      return Promise.resolve({
+        output: `todos updated:\n${formatTodos(next)}`,
+      });
     },
   };
 }

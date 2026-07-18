@@ -99,6 +99,9 @@ export async function runCompact(
   deps: CompactDeps,
 ): Promise<CompactResult | null> {
   const { store, registry, config, system } = deps;
+  const compactConfig = config.cheapModel
+    ? { ...config, model: config.cheapModel }
+    : config;
   const reduced = reduce(store.all());
   if (reduced.messages.length === 0) return null;
 
@@ -108,7 +111,12 @@ export async function runCompact(
     toApiMessages(reduced.messages),
   );
   deps.ledger?.beforeRequest(request);
-  const result = await deps.stream(config, request, () => {}, deps.signal);
+  const result = await deps.stream(
+    compactConfig,
+    request,
+    () => {},
+    deps.signal,
+  );
   deps.ledger?.afterResponse(result.usage);
 
   const summary = textOf(result.content).trim();

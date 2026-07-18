@@ -8,18 +8,25 @@
 //   stackpilot --model <id>    override model
 
 import { createInterface, type Interface } from "node:readline/promises";
+import { homedir } from "node:os";
 import process from "node:process";
 import { isCancel, select } from "@clack/prompts";
 import { loadAppConfig, ConfigError } from "../config.js";
-import { buildSystemPrompt } from "../core/prompt.js";
+import { buildSystemPrompt, getGitContext } from "../core/prompt.js";
+import { loadInstructions, findGitRoot } from "../core/instructions.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
 import { reduce } from "../core/reducer.js";
 import { SessionStore } from "../session/store.js";
 import { createRegistry, unknownToolNames } from "../tools/index.js";
-import { streamMessage } from "../transport/anthropic.js";
+import { discoverSkills, formatAvailableSkills } from "../tools/skill.js";
+import { streamWithRetry } from "../transport/anthropic.js";
 import { runApp } from "../tui/app.js";
 import { formatAge, permissionPromptPlain } from "../tui/render.js";
+import { runHook, logHookResult } from "../core/hooks.js";
+import { openMemoryDb, storeSessionMeta } from "../tools/memory.js";
+import type { SessionState } from "../core/policies.js";
+import type { AgentState } from "../tools/agent.js";
 
 interface CliArgs {
   prompt?: string;
@@ -27,22 +34,31 @@ interface CliArgs {
   yolo: boolean;
   model?: string;
   tools?: string[];
+  json: boolean;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { continue_: false, yolo: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === "-p" || a === "--print") args.prompt = argv[++i];
-    else if (a === "-c" || a === "--continue") args.continue_ = true;
-    else if (a === "--yolo") args.yolo = true;
-    else if (a === "--model") args.model = argv[++i];
-    else if (a === "--tools")
-      args.tools = (argv[++i] ?? "")
+  const args: CliArgs = { continue_: false, yolo: false, json: false };
+  const rest = [...argv];
+  while (rest.length > 0) {
+    const a = rest.shift() as string;
+    if (a === "-p" || a === "--print") {
+      const val = rest.shift();
+      if (val !== undefined) args.prompt = val;
+    } else if (a === "-c" || a === "--continue") {
+      args.continue_ = true;
+    } else if (a === "--yolo") {
+      args.yolo = true;
+    } else if (a === "--model") {
+      args.model = rest.shift();
+    } else if (a === "--tools") {
+      args.tools = (rest.shift() ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
-    else {
+    } else if (a === "--json") {
+      args.json = true;
+    } else {
       console.error(`unknown argument: ${a}`);
       process.exit(2);
     }
@@ -71,7 +87,8 @@ async function pickSession(cwd: string): Promise<SessionStore> {
     console.error("no previous session here — starting fresh");
     return SessionStore.create(cwd);
   }
-  if (summaries.length === 1) return SessionStore.open(summaries[0]!.path);
+  if (summaries.length === 1 && summaries[0])
+    return SessionStore.open(summaries[0].path);
 
   const now = Date.now();
   const choice = await select({
@@ -91,7 +108,32 @@ async function pickSession(cwd: string): Promise<SessionStore> {
   return store;
 }
 
-function makeIO(rl: Interface | null, yolo: boolean): TurnIO {
+function makeIO(rl: Interface | null, yolo: boolean, json = false): TurnIO {
+  if (json) {
+    return {
+      onText: (d) =>
+        process.stdout.write(
+          JSON.stringify({ type: "text", content: d }) + "\n",
+        ),
+      onToolStart: (name, input) =>
+        process.stdout.write(
+          JSON.stringify({ type: "tool_start", name, input }) + "\n",
+        ),
+      onToolEnd: (_name, output, isError) =>
+        process.stdout.write(
+          JSON.stringify({
+            type: "tool_end",
+            output: output.slice(0, 500),
+            isError,
+          }) + "\n",
+        ),
+      permit: () => {
+        if (yolo) return Promise.resolve({ allowed: true });
+        return Promise.resolve({ allowed: false });
+      },
+    };
+  }
+
   return {
     onText: (d) => process.stdout.write(d),
     onToolStart: (name, input) => {
@@ -105,16 +147,33 @@ function makeIO(rl: Interface | null, yolo: boolean): TurnIO {
       process.stderr.write(`  ${isError ? "✗" : "✓"} ${first.slice(0, 100)}\n`);
     },
     permit: async (name, input) => {
-      if (yolo) return true;
-      if (!rl) return false; // headless without --yolo: deny mutations
+      if (yolo) return { allowed: true };
+      if (!rl) return { allowed: false };
       const answer = await rl.question(permissionPromptPlain(name, input));
       const norm = answer.trim().toLowerCase();
-      return norm === "y" || norm === "yes";
+      if (norm === "y" || norm === "yes") return { allowed: true };
+      if (norm.startsWith("n ") || norm.startsWith("no ")) {
+        return { allowed: false, reason: norm.slice(norm.indexOf(" ") + 1) };
+      }
+      return { allowed: false };
     },
   };
 }
 
-function printStats(stats: TurnStats, model: string): void {
+function printStats(stats: TurnStats, model: string, json = false): void {
+  if (json) {
+    process.stdout.write(
+      JSON.stringify({
+        type: "turn_end",
+        model,
+        requests: stats.requests,
+        toolCalls: stats.toolCalls,
+        usage: stats.usage,
+        costUsd: stats.costUsd,
+      }) + "\n",
+    );
+    return;
+  }
   const u = stats.usage;
   process.stderr.write(
     `\n[${model}] req ${stats.requests} · tools ${stats.toolCalls} · in ${u.input_tokens} · cache-r ${u.cache_read_input_tokens} · cache-w ${u.cache_creation_input_tokens} · out ${u.output_tokens}\n`,
@@ -140,18 +199,31 @@ export async function main(): Promise<void> {
   const pricing = appConfig.pricing;
 
   const cwd = process.cwd();
-  const interactiveTty =
-    process.stdin.isTTY === true && process.stdout.isTTY === true;
+  const interactiveTty = process.stdin.isTTY && process.stdout.isTTY;
   // -p starts fresh unless -c is given (matches the documented contract; a
   // bare -p silently resuming the newest session was a P1 bug).
   const store =
     args.continue_ && args.prompt === undefined && interactiveTty
       ? await pickSession(cwd)
       : openStore(cwd, args.continue_);
-  const registry = createRegistry();
+  const skills = discoverSkills(homedir(), findGitRoot(cwd));
+  const memoryDb = openMemoryDb(homedir());
+  const sessionState: SessionState = {
+    pagedOutputs: new Map(),
+    readCache: new Map(),
+  };
+  const stream = streamWithRetry(config);
+  const agentState: AgentState = {
+    registry: undefined as unknown as ReturnType<typeof createRegistry>,
+    config,
+    stream,
+  };
+  const registry = createRegistry(skills, memoryDb, sessionState, agentState);
+  agentState.registry = registry;
+  const skillsAvailable = formatAvailableSkills(skills);
   // Precedence: --tools flag > config [tools].enabled > all enabled.
   const enabledTools = args.tools ?? appConfig.enabledTools;
-  if (enabledTools !== null && enabledTools !== undefined) {
+  if (enabledTools !== null) {
     const unknown = unknownToolNames(registry, enabledTools);
     if (unknown.length > 0) {
       console.error(
@@ -161,11 +233,57 @@ export async function main(): Promise<void> {
     }
     registry.setEnabled(enabledTools);
   }
-  const system = buildSystemPrompt(cwd);
+  const system = buildSystemPrompt(
+    cwd,
+    config.model,
+    loadInstructions(cwd, homedir()),
+    skillsAvailable,
+    getGitContext(cwd),
+  );
   const ledger = new CacheLedger();
+  const hooks = appConfig.hooks;
+
+  const sessionStartResult = await runHook(
+    "session_start",
+    hooks.sessionStart,
+    store.sessionId,
+    cwd,
+  );
+  if (sessionStartResult) {
+    logHookResult("session_start", sessionStartResult, console.error);
+  }
+
+  // session_end fires on normal exit paths (awaited) and SIGINT/SIGTERM.
+  let sessionEndFired = false;
+  async function fireSessionEnd(): Promise<void> {
+    if (sessionEndFired) return;
+    sessionEndFired = true;
+    const result = await runHook(
+      "session_end",
+      hooks.sessionEnd,
+      store.sessionId,
+      cwd,
+    );
+    if (result) logHookResult("session_end", result, console.error);
+    try {
+      storeSessionMeta(memoryDb, store.path, cwd);
+    } catch {
+      // memory extraction is best-effort
+    }
+  }
+  process.once("SIGINT", () => {
+    fireSessionEnd()
+      .then(() => process.exit(0))
+      .catch(() => process.exit(0));
+  });
+  process.once("SIGTERM", () => {
+    fireSessionEnd()
+      .then(() => process.exit(0))
+      .catch(() => process.exit(0));
+  });
 
   if (args.prompt !== undefined) {
-    const io = makeIO(null, args.yolo);
+    const io = makeIO(null, args.yolo, args.json);
     const stats = await runTurn(
       {
         store,
@@ -175,12 +293,14 @@ export async function main(): Promise<void> {
         io,
         ledger,
         pricing,
-        stream: streamMessage,
+        stream,
+        hooks,
+        sessionState,
+        maxToolResultChars: appConfig.maxToolResultChars,
       },
       args.prompt,
     );
-    printStats(stats, config.model);
-    process.stdout.write("\n");
+    printStats(stats, config.model, args.json);
     return;
   }
 
@@ -192,13 +312,17 @@ export async function main(): Promise<void> {
       system,
       pricing,
       autoCompactAtTokens: appConfig.autoCompactAtTokens,
+      hooks,
+      sessionState,
+      maxToolResultChars: appConfig.maxToolResultChars,
     });
+    await fireSessionEnd();
     return;
   }
 
   // Piped stdin (no TTY): plain line-by-line loop, no raw mode, no colors.
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const io = makeIO(rl, args.yolo);
+  const io = makeIO(rl, args.yolo, args.json);
   for (;;) {
     let line: string;
     try {
@@ -208,6 +332,34 @@ export async function main(): Promise<void> {
     }
     if (line === "") continue;
     if (line === "/exit" || line === "/quit") break;
+    if (line.startsWith("!")) {
+      const cmd = line.slice(1).trim();
+      if (cmd) {
+        const { execFileSync } = await import("node:child_process");
+        try {
+          const output = execFileSync("bash", ["-c", cmd], {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            maxBuffer: 1 * 1024 * 1024,
+            timeout: 30_000,
+          });
+          process.stdout.write(output.trimEnd() + "\n");
+        } catch (err: unknown) {
+          const e = err as {
+            stdout?: string;
+            stderr?: string;
+            message?: string;
+          };
+          if (typeof e.stdout === "string" && e.stdout.trim())
+            process.stdout.write(e.stdout.trim() + "\n");
+          if (typeof e.stderr === "string" && e.stderr.trim())
+            process.stderr.write(e.stderr.trim() + "\n");
+          if (!e.stdout && !e.stderr)
+            process.stderr.write((e.message ?? "command failed") + "\n");
+        }
+      }
+      continue;
+    }
     const stats = await runTurn(
       {
         store,
@@ -217,21 +369,27 @@ export async function main(): Promise<void> {
         io,
         ledger,
         pricing,
-        stream: streamMessage,
+        stream,
+        hooks,
+        sessionState,
+        maxToolResultChars: appConfig.maxToolResultChars,
       },
       line,
     );
-    printStats(stats, config.model);
+    printStats(stats, config.model, args.json);
   }
   rl.close();
+  await fireSessionEnd();
 }
 
 const isDirect =
   process.argv[1] !== undefined &&
   import.meta.url.endsWith(process.argv[1].split("/").pop() ?? "");
 if (isDirect) {
-  main().catch((err) => {
-    console.error(`stackpilot: ${(err as Error).message}`);
+  main().catch((err: unknown) => {
+    console.error(
+      `stackpilot: ${err instanceof Error ? err.message : String(err)}`,
+    );
     process.exit(1);
   });
 }

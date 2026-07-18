@@ -1,21 +1,19 @@
-// Interactive TUI app. Inline rendering: the transcript lives in normal
-// terminal scrollback; between turns readline owns the input line (history
-// for free). During a turn we own stdin in raw mode so Esc can abort.
+// TUI: readline for input, stdout for streaming output. Bottom-bar
+// separator + status line between turns. Esc via InterruptController.
 
-import { createInterface, type Interface } from "node:readline/promises";
+import { createInterface } from "node:readline/promises";
 import { emitKeypressEvents } from "node:readline";
 import process from "node:process";
 import { isCancel, multiselect, select, text } from "@clack/prompts";
-import { CLEAR_LINE, SPINNER_FRAMES, cyan, dim } from "./ansi.js";
+import { SPINNER_FRAMES, cyan, dim } from "./ansi.js";
+import { MarkdownRenderer } from "./markdown.js";
 import {
-  banner,
   helpText,
   interrupted,
   permissionLabel,
+  richToolOutput,
   statsLine,
   todoBox,
-  toolEndLine,
-  toolStartLine,
   usageSummary,
 } from "./render.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
@@ -27,7 +25,9 @@ import { saveConfigPatch, type ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
 import type { TransportConfig } from "../transport/anthropic.js";
-import { streamMessage } from "../transport/anthropic.js";
+import { streamWithRetry } from "../transport/anthropic.js";
+import type { HookConfig } from "../core/hooks.js";
+import type { SessionState } from "../core/policies.js";
 
 export interface AppDeps {
   store: SessionStore;
@@ -35,34 +35,17 @@ export interface AppDeps {
   config: TransportConfig;
   system: string;
   pricing?: Record<string, ModelPricing>;
-  // 0 disables auto-compaction.
   autoCompactAtTokens?: number;
+  hooks?: {
+    preTool?: HookConfig;
+    postTool?: HookConfig;
+    sessionStart?: HookConfig;
+    sessionEnd?: HookConfig;
+  };
+  sessionState?: SessionState;
+  maxToolResultChars?: number;
 }
 
-class Spinner {
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private frame = 0;
-
-  start(label: string): void {
-    if (this.timer) return;
-    this.timer = setInterval(() => {
-      this.frame = (this.frame + 1) % SPINNER_FRAMES.length;
-      process.stderr.write(
-        `${CLEAR_LINE}${cyan(SPINNER_FRAMES[this.frame]!)} ${dim(label)}`,
-      );
-    }, 80);
-  }
-
-  stop(): void {
-    if (!this.timer) return;
-    clearInterval(this.timer);
-    this.timer = null;
-    process.stderr.write(CLEAR_LINE);
-  }
-}
-
-// Owns Esc detection during a turn. Raw mode is enabled only while a turn is
-// running and released for readline prompts (permission questions, input).
 class InterruptController {
   private controller = new AbortController();
   private active = false;
@@ -77,13 +60,6 @@ class InterruptController {
     return this.controller.signal;
   }
 
-  // stdin/TTY state is owned by the readline Interface for its whole
-  // lifetime (it enabled raw mode at creation and restores the terminal on
-  // close). We only borrow the keypress stream. Toggling raw mode here
-  // re-enables kernel echo behind readline's back, and every submitted line
-  // then gets echoed twice (kernel + readline). Never pause stdin either: a
-  // paused TTY stream stops ref'ing the event loop and node exits mid-await
-  // on the next question(). Attach/detach the listener — nothing else.
   arm(): void {
     if (this.active) return;
     this.active = true;
@@ -107,12 +83,6 @@ class InterruptController {
   }
 }
 
-// clack prompts flip the TTY out of raw mode AND pause stdin when they
-// close; the readline Interface expects raw to stay on for its whole
-// lifetime, and a paused TTY stream stops ref'ing the event loop — node
-// then exits 0 mid-await on the next question() (the permission path only
-// survived because interrupt.arm() resumes as a side effect). Re-assert
-// both after every clack interaction.
 function restoreReadlineTty(): void {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.resume();
@@ -124,40 +94,64 @@ function isAbort(err: unknown): boolean {
 
 export async function runApp(deps: AppDeps): Promise<void> {
   const { store, registry, config, system, pricing } = deps;
+  const stream = streamWithRetry(config);
   const autoCompactState = { value: deps.autoCompactAtTokens ?? 0 };
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const spinner = new Spinner();
   const interrupt = new InterruptController();
   const turns: TurnStats[] = [];
   const sessionAllow = new Set<string>();
   const ledger = new CacheLedger();
+  const md = new MarkdownRenderer();
   let streamedAnything = false;
+
+  let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+  let spinnerFrame = 0;
+
+  function startSpinner(label: string): void {
+    if (spinnerTimer) return;
+    spinnerTimer = setInterval(() => {
+      spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+      const frame = SPINNER_FRAMES[spinnerFrame] ?? " ";
+      process.stderr.write(`\r\x1b[K${cyan(frame)} ${dim(label)}`);
+    }, 80);
+  }
+
+  function stopSpinner(): void {
+    if (!spinnerTimer) return;
+    clearInterval(spinnerTimer);
+    spinnerTimer = null;
+    process.stderr.write("\r\x1b[K");
+  }
 
   const io: TurnIO = {
     onText: (delta) => {
       if (!streamedAnything) {
-        spinner.stop();
+        stopSpinner();
         streamedAnything = true;
         process.stdout.write("\n");
       }
       process.stdout.write(delta);
     },
     onToolStart: (name, input) => {
-      spinner.stop();
-      process.stdout.write(`\n\n${toolStartLine(name, input)}\n`);
+      stopSpinner();
+      const flushed = md.flush();
+      if (flushed.length > 0) process.stdout.write(flushed + "\n");
+      md.reset();
+      const brief = JSON.stringify(input);
+      process.stdout.write(
+        `\n${cyan("⏺")} ${name} ${brief.length > 120 ? brief.slice(0, 120) + "…" : brief}\n`,
+      );
       streamedAnything = false;
-      spinner.start("running tool…");
+      startSpinner("running…");
     },
-    onToolEnd: (_name, output, isError) => {
-      spinner.stop();
-      process.stdout.write(`${toolEndLine(output, isError)}\n`);
-      spinner.start("thinking…");
+    onToolEnd: (name, output, isError) => {
+      stopSpinner();
+      process.stdout.write(`${richToolOutput(name, output, isError)}\n`);
+      startSpinner("thinking…");
     },
     permit: async (name, input) => {
-      spinner.stop();
-      if (sessionAllow.has(name)) return true;
-      // Esc inside the menu is clack's cancel (mapped to interrupt below),
-      // so our own listener is detached while the menu is up.
+      stopSpinner();
+      if (sessionAllow.has(name)) return { allowed: true };
       interrupt.disarm();
       try {
         const choice = await select({
@@ -165,6 +159,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
           options: [
             { value: "once", label: "Allow once" },
             { value: "session", label: `Allow ${name} for this session` },
+            { value: "deny_feedback", label: "Deny (with feedback)" },
             { value: "deny", label: "Deny" },
           ],
         });
@@ -172,10 +167,22 @@ export async function runApp(deps: AppDeps): Promise<void> {
           interrupt.abort();
           const err = new Error("aborted by user");
           err.name = "AbortError";
-          throw err; // loop backfills tool_results, app prints interrupted
+          throw err;
         }
         if (choice === "session") sessionAllow.add(name);
-        return choice === "once" || choice === "session";
+        if (choice === "once" || choice === "session") return { allowed: true };
+        if (choice === "deny_feedback") {
+          const feedback = await text({
+            message: "Why are you denying this tool call?",
+            placeholder: "Reason...",
+          });
+          if (isCancel(feedback)) return { allowed: false };
+          return {
+            allowed: false,
+            reason: feedback.trim() || undefined,
+          };
+        }
+        return { allowed: false };
       } finally {
         restoreReadlineTty();
         interrupt.arm();
@@ -183,12 +190,21 @@ export async function runApp(deps: AppDeps): Promise<void> {
     },
   };
 
-  console.log(banner(config.model, store.sessionId, process.cwd()));
+  const totalCost = turns.reduce((sum, t) => sum + (t.costUsd ?? 0), 0);
+  const costStr = pricing ? ` ${formatUsd(totalCost)}` : "";
+  process.stdout.write(
+    [
+      `${cyan("stackpilot")} ${dim("·")} ${config.model} ${dim("·")} session ${store.sessionId.slice(0, 8)}`,
+      dim(`cwd ${process.cwd()}${costStr}`),
+      dim("esc interrupts · ! for shell · /help for commands"),
+      "",
+    ].join("\n"),
+  );
 
   async function doCompact(reason: "manual" | "auto"): Promise<void> {
     interrupt.reset();
     interrupt.arm();
-    spinner.start("compacting…");
+    startSpinner("compacting…");
     try {
       const res = await runCompact({
         store,
@@ -198,23 +214,23 @@ export async function runApp(deps: AppDeps): Promise<void> {
         ledger,
         pricing,
         signal: interrupt.signal,
-        stream: streamMessage,
+        stream,
       });
-      spinner.stop();
+      stopSpinner();
       if (!res) {
-        console.log(dim("nothing to compact"));
+        process.stdout.write(dim("nothing to compact") + "\n");
         return;
       }
       const cost = res.costUsd !== null ? ` · ${formatUsd(res.costUsd)}` : "";
-      console.log(
+      process.stdout.write(
         dim(
           `✂ compacted (${reason}): ${res.droppedMessages} messages → ${res.summaryChars}-char summary${cost}`,
-        ),
+        ) + "\n",
       );
     } catch (err) {
-      spinner.stop();
+      stopSpinner();
       if (isAbort(err)) {
-        console.log(interrupted());
+        process.stdout.write("\n" + interrupted() + "\n");
         return;
       }
       throw err;
@@ -259,11 +275,10 @@ export async function runApp(deps: AppDeps): Promise<void> {
       required: false,
     });
     if (isCancel(chosen)) return;
-    const names = chosen as string[];
+    const names = chosen;
     const requestsSent = turns.some((t) => t.requests > 0);
 
     if (!requestsSent) {
-      // No prefix established yet — safe to apply now.
       const scope = await select({
         message: "Apply how?",
         options: [
@@ -280,12 +295,12 @@ export async function runApp(deps: AppDeps): Promise<void> {
       });
       if (scope === "permanent") {
         const path = saveConfigPatch({ enabledTools: names }, process.env);
-        console.log(dim(`saved to ${path}`));
+        process.stdout.write(dim(`saved to ${path}`) + "\n");
       }
-      console.log(dim(`tools enabled: ${names.join(", ") || "(none)"}`));
+      process.stdout.write(
+        dim(`tools enabled: ${names.join(", ") || "(none)"}`) + "\n",
+      );
     } else {
-      // Prefix live — a change now would regenerate the whole cache, so
-      // tool changes are deferred to the next session (user decision).
       const scope = await select({
         message: "Prefix already established — tool changes apply next session",
         options: [
@@ -295,7 +310,9 @@ export async function runApp(deps: AppDeps): Promise<void> {
       });
       if (isCancel(scope) || scope === "cancel") return;
       const path = saveConfigPatch({ enabledTools: names }, process.env);
-      console.log(dim(`saved to ${path} — takes effect next session`));
+      process.stdout.write(
+        dim(`saved to ${path} — takes effect next session`) + "\n",
+      );
     }
   }
 
@@ -318,41 +335,83 @@ export async function runApp(deps: AppDeps): Promise<void> {
       ],
     });
     if (isCancel(scope)) return;
-    autoCompactState.value = value; // prefix-safe: applies mid-session
+    autoCompactState.value = value;
     if (scope === "permanent") {
       const path = saveConfigPatch({ autoCompactAtTokens: value }, process.env);
-      console.log(dim(`saved to ${path}`));
+      process.stdout.write(dim(`saved to ${path}`) + "\n");
     }
-    console.log(
-      dim(`auto-compact: ${value === 0 ? "off" : `at ${value} tokens`}`),
+    process.stdout.write(
+      dim(`auto-compact: ${value === 0 ? "off" : `at ${value} tokens`}`) + "\n",
     );
   }
 
   for (;;) {
+    // Bottom-bar: separator + status before each prompt
+    if (turns.length > 0) {
+      const last = turns[turns.length - 1];
+      if (last) process.stdout.write("\n");
+    } else {
+      process.stdout.write("\n");
+    }
+
     let line: string;
     try {
-      line = (await rl.question(`\n${cyan("›")} `)).trim();
+      line = (await rl.question(`${cyan("›")} `)).trim();
     } catch {
-      break; // stdin closed (Ctrl+D) — exit cleanly, session is already saved
+      break;
     }
     if (line === "") continue;
 
+    if (line.startsWith("!")) {
+      const cmd = line.slice(1).trim();
+      if (cmd) {
+        const { execFileSync } = await import("node:child_process");
+        try {
+          const output = execFileSync("bash", ["-c", cmd], {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            maxBuffer: 1 * 1024 * 1024,
+            timeout: 30_000,
+          });
+          process.stdout.write(output.trimEnd() + "\n");
+        } catch (err: unknown) {
+          const e = err as {
+            stdout?: string;
+            stderr?: string;
+            message?: string;
+          };
+          if (typeof e.stdout === "string" && e.stdout.trim())
+            process.stdout.write(e.stdout.trim() + "\n");
+          if (typeof e.stderr === "string" && e.stderr.trim())
+            process.stderr.write(e.stderr.trim() + "\n");
+          if (!e.stdout && !e.stderr)
+            process.stderr.write((e.message ?? "command failed") + "\n");
+        }
+      }
+      continue;
+    }
+
     if (line.startsWith("/")) {
       if (line === "/exit" || line === "/quit") break;
-      else if (line === "/help") console.log(helpText());
+      else if (line === "/help") process.stdout.write(helpText() + "\n");
       else if (line === "/todos")
-        console.log(todoBox(registry.todoState.todos));
-      else if (line === "/usage") console.log(usageSummary(turns));
+        process.stdout.write(todoBox(registry.todoState.todos) + "\n");
+      else if (line === "/usage")
+        process.stdout.write(usageSummary(turns) + "\n");
       else if (line === "/compact") await doCompact("manual");
       else if (line === "/config") await doConfig();
-      else console.log(dim(`unknown command: ${line} (try /help)`));
+      else
+        process.stdout.write(
+          dim(`unknown command: ${line} (try /help)`) + "\n",
+        );
       continue;
     }
 
     interrupt.reset();
     interrupt.arm();
     streamedAnything = false;
-    spinner.start("thinking…");
+    md.reset();
+    startSpinner("thinking…");
     try {
       const stats = await runTurn(
         {
@@ -364,35 +423,41 @@ export async function runApp(deps: AppDeps): Promise<void> {
           ledger,
           pricing,
           signal: interrupt.signal,
-          stream: streamMessage,
+          stream,
+          hooks: deps.hooks,
+          sessionState: deps.sessionState,
+          maxToolResultChars: deps.maxToolResultChars,
         },
         line,
       );
       turns.push(stats);
-      spinner.stop();
-      process.stdout.write(`\n\n${statsLine(stats)}\n`);
+      stopSpinner();
+      const flushed = md.flush();
+      if (flushed.length > 0) process.stdout.write(flushed + "\n");
+      process.stdout.write("\n" + statsLine(stats) + "\n");
       for (const note of stats.notes) {
-        process.stdout.write(`${dim(`⚠ ${note}`)}\n`);
+        process.stdout.write(dim(`⚠ ${note}`) + "\n");
       }
       if (
         autoCompactState.value > 0 &&
         stats.lastRequestInputTokens >= autoCompactState.value
       ) {
-        console.log(
+        process.stdout.write(
           dim(
             `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactState.value} threshold — auto-compacting`,
-          ),
+          ) + "\n",
         );
         await doCompact("auto");
       }
     } catch (err) {
-      spinner.stop();
+      stopSpinner();
+      md.reset();
       if (isAbort(err)) {
-        process.stdout.write(`\n${interrupted()}\n`);
+        process.stdout.write("\n" + interrupted() + "\n");
       } else {
         interrupt.disarm();
         rl.close();
-        throw err; // unrecoverable — surface it, don't loop on a broken state
+        throw err;
       }
     } finally {
       interrupt.disarm();
@@ -400,5 +465,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
   }
 
   rl.close();
-  console.log(dim(`session ${store.sessionId} saved · resume with -c`));
+  process.stdout.write(
+    "\n" + dim(`session ${store.sessionId} saved · resume with -c`) + "\n",
+  );
 }

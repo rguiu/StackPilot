@@ -10,7 +10,9 @@ import {
 } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "sp-config-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 // Env with credentials + an isolated config path.
 function env(configFile: string): NodeJS.ProcessEnv {

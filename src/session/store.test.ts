@@ -7,7 +7,9 @@ import type { SessionEvent } from "./events.js";
 
 const home = mkdtempSync(join(tmpdir(), "sp-store-"));
 const cwd = "/fake/project";
-afterAll(() => rmSync(home, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 function newSession(prompt: string, mtime: Date): SessionStore {
   const store = SessionStore.create(cwd, home);

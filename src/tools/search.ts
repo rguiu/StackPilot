@@ -17,30 +17,69 @@ const SKIP_DIRS = new Set([".git", "node_modules", "dist", ".stackpilot"]);
 export const grepTool: ToolDef = {
   name: "Grep",
   description:
-    "Search file contents with a regex (ripgrep). Optional path and glob filter.",
+    "Search file contents with a regex (ripgrep). Supports context lines, " +
+    "case-insensitive mode, output modes, and file-type filtering.",
   readOnly: true,
   inputSchema: {
     type: "object",
     properties: {
       pattern: { type: "string" },
-      path: { type: "string" },
-      glob: { type: "string", description: 'e.g. "*.ts"' },
+      path: { type: "string", description: "Directory or file to search" },
+      glob: { type: "string", description: 'File pattern, e.g. "*.ts"' },
+      i: { type: "boolean", description: "Case-insensitive search" },
+      A: {
+        type: "number",
+        description: "Lines to show after each match",
+      },
+      B: {
+        type: "number",
+        description: "Lines to show before each match",
+      },
+      C: {
+        type: "number",
+        description: "Lines to show before and after each match",
+      },
+      head_limit: {
+        type: "number",
+        description: "Max matches to return (default 50)",
+      },
+      output_mode: {
+        type: "string",
+        enum: ["content", "files_with_matches", "count"],
+        description:
+          "Output format: full matching lines, file paths only, or match counts",
+      },
     },
     required: ["pattern"],
   },
-  async execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const path = optionalString(input, "path") ?? ".";
     const glob = optionalString(input, "glob");
-    const args = [
-      "--line-number",
-      "--no-heading",
-      "--color",
-      "never",
-      "--max-count",
-      "50",
-    ];
+    const caseInsensitive = input.i === true;
+    const after = typeof input.A === "number" ? input.A : undefined;
+    const before = typeof input.B === "number" ? input.B : undefined;
+    const context = typeof input.C === "number" ? input.C : undefined;
+    const outputMode = optionalString(input, "output_mode") ?? "content";
+    const headLimit =
+      typeof input.head_limit === "number" ? input.head_limit : 50;
+
+    const args = ["--no-heading", "--color", "never"];
+
+    if (outputMode === "files_with_matches") {
+      args.push("--files-with-matches");
+    } else if (outputMode === "count") {
+      args.push("--count");
+    } else {
+      args.push("--line-number");
+    }
+
+    if (caseInsensitive) args.push("--ignore-case");
+    if (context !== undefined) args.push("--context", String(context));
+    if (after !== undefined) args.push("--after-context", String(after));
+    if (before !== undefined) args.push("--before-context", String(before));
     if (glob) args.push("--glob", glob);
+    args.push("--max-count", String(Math.min(headLimit, 200)));
     args.push("--regexp", pattern, path);
     return new Promise<ToolResult>((resolvePromise) => {
       execFile(
@@ -71,7 +110,8 @@ export const grepTool: ToolDef = {
 export function globToRegExp(pattern: string): RegExp {
   let re = "";
   for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i]!;
+    const ch = pattern[i];
+    if (ch === undefined) continue;
     if (ch === "*") {
       if (pattern[i + 1] === "*") {
         re += pattern[i + 2] === "/" ? "(?:.*/)?" : ".*";
@@ -122,7 +162,7 @@ export const globTool: ToolDef = {
     },
     required: ["pattern"],
   },
-  async execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const baseInput = optionalString(input, "path") ?? ".";
     const base = isAbsolute(baseInput) ? baseInput : resolve(cwd, baseInput);
@@ -134,8 +174,8 @@ export const globTool: ToolDef = {
       .filter((f) => re.test(f))
       .sort()
       .slice(0, 200);
-    return {
+    return Promise.resolve({
       output: matches.length > 0 ? matches.join("\n") : "no files match",
-    };
+    });
   },
 };

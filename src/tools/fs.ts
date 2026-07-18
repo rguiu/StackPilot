@@ -32,7 +32,7 @@ export const readTool: ToolDef = {
     },
     required: ["file_path"],
   },
-  async execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd): Promise<ToolResult> {
     const path = absPath(cwd, requireString(input, "file_path"));
     const offset = typeof input.offset === "number" ? input.offset : 1;
     const limit = typeof input.limit === "number" ? input.limit : MAX_LINES;
@@ -40,7 +40,10 @@ export const readTool: ToolDef = {
     try {
       raw = readFileSync(path, "utf8");
     } catch (err) {
-      return { output: (err as Error).message, isError: true };
+      return Promise.resolve({
+        output: (err as Error).message,
+        isError: true,
+      });
     }
     const lines = raw.split("\n");
     const slice = lines.slice(offset - 1, offset - 1 + limit);
@@ -51,7 +54,9 @@ export const readTool: ToolDef = {
       offset - 1 + limit < lines.length
         ? `\n… (${lines.length} lines total, showing ${offset}-${offset - 1 + slice.length})`
         : "";
-    return { output: truncate(numbered + suffix, MAX_OUTPUT) };
+    return Promise.resolve({
+      output: truncate(numbered + suffix, MAX_OUTPUT),
+    });
   },
 };
 
@@ -67,15 +72,20 @@ export const writeTool: ToolDef = {
     },
     required: ["file_path", "content"],
   },
-  async execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd): Promise<ToolResult> {
     const path = absPath(cwd, requireString(input, "file_path"));
     const content = input.content;
     if (typeof content !== "string") {
-      return { output: '"content" must be a string', isError: true };
+      return Promise.resolve({
+        output: '"content" must be a string',
+        isError: true,
+      });
     }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content, "utf8");
-    return { output: `wrote ${Buffer.byteLength(content)} bytes to ${path}` };
+    return Promise.resolve({
+      output: `wrote ${Buffer.byteLength(content)} bytes to ${path}`,
+    });
   },
 };
 
@@ -94,40 +104,46 @@ export const editTool: ToolDef = {
     },
     required: ["file_path", "old_string", "new_string"],
   },
-  async execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd): Promise<ToolResult> {
     const path = absPath(cwd, requireString(input, "file_path"));
     const oldString = requireString(input, "old_string");
     const newString =
       typeof input.new_string === "string" ? input.new_string : "";
     if (oldString === newString) {
-      return {
+      return Promise.resolve({
         output: "old_string and new_string are identical",
         isError: true,
-      };
+      });
     }
     let raw: string;
     try {
       raw = readFileSync(path, "utf8");
     } catch (err) {
-      return { output: (err as Error).message, isError: true };
+      return Promise.resolve({
+        output: (err as Error).message,
+        isError: true,
+      });
     }
     const count = raw.split(oldString).length - 1;
     if (count === 0) {
-      return { output: "old_string not found in file", isError: true };
+      return Promise.resolve({
+        output: "old_string not found in file",
+        isError: true,
+      });
     }
     if (count > 1 && input.replace_all !== true) {
-      return {
+      return Promise.resolve({
         output: `old_string matches ${count} times; provide more context or set replace_all`,
         isError: true,
-      };
+      });
     }
     const next =
       input.replace_all === true
         ? raw.split(oldString).join(newString)
         : raw.replace(oldString, newString);
     writeFileSync(path, next, "utf8");
-    return {
+    return Promise.resolve({
       output: `replaced ${input.replace_all === true ? count : 1} occurrence(s) in ${path}`,
-    };
+    });
   },
 };

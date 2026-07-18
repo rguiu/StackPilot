@@ -3,9 +3,15 @@
 // direct I/O decisions.
 
 import type { SessionStore } from "../session/store.js";
-import { reduce, toApiMessages } from "./reducer.js";
+import { reduce } from "./reducer.js";
 import { applyCacheControl, type CacheLedger } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
+import {
+  pageToolResults,
+  deduplicateReads,
+  evictOldResults,
+  type SessionState,
+} from "./policies.js";
 import type { ModelPricing } from "../config.js";
 import type {
   MessagesRequest,
@@ -14,13 +20,18 @@ import type {
   UsageInfo,
 } from "../transport/anthropic.js";
 import { executeTool, type Registry } from "../tools/index.js";
+import { runHook, type HookConfig } from "./hooks.js";
 
 export interface TurnIO {
   onText(delta: string): void;
   onToolStart(name: string, input: Record<string, unknown>): void;
   onToolEnd(name: string, output: string, isError: boolean): void;
-  // Permission gate: true → run the tool. Read-only tools bypass this.
-  permit(name: string, input: Record<string, unknown>): Promise<boolean>;
+  // Permission gate: resolved → allowed, optional denial reason.
+  // Read-only tools bypass this entirely.
+  permit(
+    name: string,
+    input: Record<string, unknown>,
+  ): Promise<{ allowed: boolean; reason?: string }>;
 }
 
 export interface TurnDeps {
@@ -40,6 +51,19 @@ export interface TurnDeps {
   // in-flight assistant turn; the event tree stays consistent because events
   // are only appended after a request completes.
   signal?: AbortSignal;
+  // Shared mutable state for context policies (paging, dedup, eviction).
+  sessionState?: SessionState;
+  // Max chars per tool_result before paging kicks in. 0 = no paging.
+  maxToolResultChars?: number;
+  // Hook configs keyed by point ("pre-tool" / "post-tool"). Undefined hooks
+  // are skipped (no-op). Hook stdout is collected and injected as a
+  // <system-reminder> into the next user message.
+  hooks?: {
+    preTool?: HookConfig;
+    postTool?: HookConfig;
+    sessionStart?: HookConfig;
+    sessionEnd?: HookConfig;
+  };
   stream(
     cfg: TransportConfig,
     req: MessagesRequest,
@@ -62,9 +86,20 @@ export interface TurnStats {
   // Total input tokens (fresh + cache read + cache write) of the LAST
   // request — the auto-compaction trigger metric.
   lastRequestInputTokens: number;
+  hookReminders: string[];
 }
 
 const MAX_ITERATIONS = 40;
+
+function withReminders(
+  results: { tool_use_id: string }[],
+  reminders: string[],
+): unknown[] {
+  if (reminders.length === 0) return results;
+  const blocks = reminders.map((text) => ({ type: "text" as const, text }));
+  reminders.length = 0;
+  return [...blocks, ...results];
+}
 
 interface ToolUseBlock {
   type: "tool_use";
@@ -99,26 +134,49 @@ export async function runTurn(
     notes: [],
     costUsd: null,
     lastRequestInputTokens: 0,
+    hookReminders: [],
   };
   let priceIncomplete = false;
 
   let leaf = reduce(store.all()).leafUuid;
-  leaf = store.append({
+  const userEvent = store.append({
     type: "user",
     parentUuid: leaf,
     message: { role: "user", content: [{ type: "text", text: userText }] },
-  }).uuid!;
+  });
+  if (!userEvent.uuid) throw new Error("store.append returned no uuid");
+  leaf = userEvent.uuid;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const reduced = reduce(store.all());
-    const request = applyCacheControl(
-      system,
-      registry.schemas(),
-      toApiMessages(reduced.messages),
-    );
+    const apiMessages = reduced.messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    if (deps.sessionState) {
+      if (deps.maxToolResultChars && deps.maxToolResultChars > 0) {
+        pageToolResults(
+          apiMessages,
+          deps.sessionState,
+          deps.maxToolResultChars,
+        );
+      }
+      deduplicateReads(apiMessages, deps.sessionState);
+      evictOldResults(apiMessages);
+    }
+
+    const request = applyCacheControl(system, registry.schemas(), apiMessages);
     deps.ledger?.beforeRequest(request);
     stats.requests++;
-    const result = await deps.stream(config, request, io.onText, deps.signal);
+    const result = await deps.stream(
+      config,
+      request,
+      (d) => {
+        io.onText(d);
+      },
+      deps.signal,
+    );
     accumulate(stats, result.usage);
     stats.lastRequestInputTokens =
       (result.usage.input_tokens ?? 0) +
@@ -138,7 +196,7 @@ export async function runTurn(
     const verdict = deps.ledger?.afterResponse(result.usage);
     if (verdict?.note) stats.notes.push(verdict.note);
 
-    leaf = store.append({
+    const assistantEvent = store.append({
       type: "assistant",
       parentUuid: leaf,
       message: {
@@ -146,7 +204,9 @@ export async function runTurn(
         content: result.content,
         usage: result.usage,
       },
-    }).uuid!;
+    });
+    if (!assistantEvent.uuid) throw new Error("store.append returned no uuid");
+    leaf = assistantEvent.uuid;
 
     const uses = toolUses(result.content);
     if (result.stopReason !== "tool_use" || uses.length === 0) break;
@@ -177,15 +237,23 @@ export async function runTurn(
       store.append({
         type: "user",
         parentUuid: leaf,
-        message: { role: "user", content: results },
+        message: {
+          role: "user",
+          content: withReminders(results, stats.hookReminders),
+        },
       });
       throw err;
     }
-    leaf = store.append({
+    const toolResultEvent = store.append({
       type: "user",
       parentUuid: leaf,
-      message: { role: "user", content: results },
-    }).uuid!;
+      message: {
+        role: "user",
+        content: withReminders(results, stats.hookReminders),
+      },
+    });
+    if (!toolResultEvent.uuid) throw new Error("store.append returned no uuid");
+    leaf = toolResultEvent.uuid;
   }
 
   return stats;
@@ -196,28 +264,66 @@ async function dispatchTool(
   use: ToolUseBlock,
   stats: TurnStats,
 ): Promise<unknown> {
-  const { registry, io } = deps;
-  const input = use.input ?? {};
+  const { registry, io, store } = deps;
+  const input = use.input;
   const def = registry.get(use.name);
   stats.toolCalls++;
 
-  let output: string;
+  let output = "";
   let isError = false;
+
   if (!def) {
     output = `unknown tool: ${use.name}`;
     isError = true;
   } else if (!registry.isEnabled(use.name)) {
     output = `tool disabled for this session: ${use.name}`;
     isError = true;
-  } else if (!def.readOnly && !(await io.permit(use.name, input))) {
-    output = "user denied permission for this tool call";
-    isError = true;
-  } else {
+  } else if (!def.readOnly) {
+    const perm = await io.permit(use.name, input);
+    if (!perm.allowed) {
+      output = perm.reason
+        ? `user denied permission for this tool call: ${perm.reason}`
+        : "user denied permission for this tool call";
+      isError = true;
+    }
+  }
+
+  if (!isError && def) {
+    const sessionId = store.sessionId;
+    const cwd = process.cwd();
+    const preResult = await runHook(
+      "pre_tool",
+      deps.hooks?.preTool,
+      sessionId,
+      cwd,
+      use.name,
+      input,
+    );
+    if (preResult && preResult.stdout) {
+      stats.hookReminders.push(
+        `<system-reminder>\n${preResult.stdout}\n</system-reminder>`,
+      );
+    }
+
     io.onToolStart(use.name, input);
     const result = await executeTool(def, input, process.cwd());
     output = result.output;
     isError = result.isError === true;
     io.onToolEnd(use.name, output, isError);
+
+    const postResult = await runHook(
+      "post_tool",
+      deps.hooks?.postTool,
+      sessionId,
+      cwd,
+      use.name,
+      input,
+    );
+    if (postResult && postResult.stdout) {
+      stats.hookReminders.push(
+        `<system-reminder>\n${postResult.stdout}\n</system-reminder>`,
+      );
+    }
   }
 
   return {

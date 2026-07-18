@@ -37,8 +37,9 @@ export function activePath(
 
   let leaf: string | undefined;
   for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i]!.uuid) {
-      leaf = events[i]!.uuid;
+    const event = events[i];
+    if (event?.uuid) {
+      leaf = event.uuid;
       break;
     }
   }
@@ -48,7 +49,8 @@ export function activePath(
   let cur: string | null | undefined = leaf;
   while (cur && byUuid.has(cur) && !seen.has(cur)) {
     seen.add(cur);
-    const node: SessionEvent = byUuid.get(cur)!;
+    const node = byUuid.get(cur);
+    if (!node) break;
     reversed.push(node);
     cur = node.parentUuid ?? null;
   }
@@ -76,7 +78,7 @@ export function reduce(events: readonly SessionEvent[]): ReducedSession {
       // conversation restarts at the summary (older events stay on disk).
       if (e.isCompactSummary === true) messages.length = 0;
       messages.push({
-        role: e.message.role ?? (e.type as "user" | "assistant"),
+        role: e.message.role,
         content: e.message.content,
         usage: e.message.usage,
       });
@@ -93,7 +95,7 @@ export function reduce(events: readonly SessionEvent[]): ReducedSession {
       branchPoints,
     },
     activePath: path,
-    leafUuid: path.length > 0 ? (path[path.length - 1]!.uuid ?? null) : null,
+    leafUuid: path.length > 0 ? (path[path.length - 1]?.uuid ?? null) : null,
     messages,
   };
 }

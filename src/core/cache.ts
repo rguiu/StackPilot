@@ -6,9 +6,13 @@
 // previous request so we can PREDICT what a stack change will invalidate
 // and DETECT regenerations from the usage counters the server returns.
 //
-// Breakpoint layout (2 of the 4 allowed):
-//   1. static  — last system block: covers tools + system, written once
-//   2. moving  — last content block of the last message: each turn extends
+// Breakpoint layout (3 of the 4 allowed):
+//   1. static  — first system block: identity + static rules (never changes
+//      within a session; cache persists across turns)
+//   2. static  — second system block: instructions + git + skills (may
+//      change between sessions but not within; separate cache from block 1
+//      so a CLAUDE.md reload only invalidates this block)
+//   3. moving  — last content block of the last message: each turn extends
 //      the cached conversation; the server prefix-matches against recent
 //      breakpoints, so appending is a hit and mutating history is a miss.
 
@@ -24,15 +28,58 @@ export function applyCacheControl(
   tools: unknown[],
   messages: Message[],
 ): MessagesRequest {
-  const systemBlocks = [
-    { type: "text", text: system, cache_control: EPHEMERAL },
-  ];
+  // Split system into 2 cache blocks: static rules (identity, security,
+  // coding conventions, tool usage) vs dynamic content (skills, CLAUDE.md).
+  // This way a CLAUDE.md change only invalidates block 1, not block 0.
+  const splitIdx = findDynamicSplit(system);
+  const systemBlocks: {
+    type: "text";
+    text: string;
+    cache_control?: { type: "ephemeral" };
+  }[] = [];
+
+  if (splitIdx > 0) {
+    const staticBlock = system.slice(0, splitIdx).trimEnd();
+    const dynamicBlock = system.slice(splitIdx).trimStart();
+    if (staticBlock.length > 0) {
+      systemBlocks.push({
+        type: "text",
+        text: staticBlock,
+        cache_control: EPHEMERAL,
+      });
+    }
+    if (dynamicBlock.length > 0) {
+      systemBlocks.push({
+        type: "text",
+        text: dynamicBlock,
+        cache_control: EPHEMERAL,
+      });
+    }
+  } else {
+    systemBlocks.push({ type: "text", text: system, cache_control: EPHEMERAL });
+  }
 
   const marked = messages.map((m, i) =>
     i === messages.length - 1 ? markLastBlock(m) : m,
   );
 
   return { system: systemBlocks, tools, messages: marked };
+}
+
+// Heuristic split point: where dynamic per-session content begins.
+// Sections: "Available skills", "Project and user instructions",
+// "User-level instructions".
+function findDynamicSplit(system: string): number {
+  const patterns = [
+    "Available skills",
+    "# Project and user instructions",
+    "# User-level instructions",
+  ];
+  for (const pat of patterns) {
+    const idx = system.indexOf(pat);
+    if (idx > 0) return idx;
+  }
+  return -1;
 }
 
 function markLastBlock(message: Message): Message {
@@ -56,7 +103,7 @@ function markLastBlock(message: Message): Message {
 // the cache key, so equality checks must too.
 export function stripCacheControl<T>(value: T): T {
   if (Array.isArray(value)) {
-    return value.map((v) => stripCacheControl(v)) as T;
+    return value.map((v: unknown) => stripCacheControl(v)) as unknown as T;
   }
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};

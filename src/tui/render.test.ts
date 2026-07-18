@@ -22,6 +22,7 @@ const stats = (over: Partial<TurnStats["usage"]> = {}): TurnStats => ({
   notes: [],
   costUsd: null,
   lastRequestInputTokens: 0,
+  hookReminders: [],
 });
 
 describe("toolStartLine", () => {

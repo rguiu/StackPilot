@@ -29,7 +29,11 @@ beforeAll(async () => {
       ]),
     );
   });
-  await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+  await new Promise<void>((resolve) =>
+    server.listen(0, () => {
+      resolve();
+    }),
+  );
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("no port");

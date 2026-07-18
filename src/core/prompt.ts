@@ -1,18 +1,138 @@
-// System prompt builder. Pure. Deliberately byte-stable within a session:
-// nothing time- or turn-dependent may go in here (prefix stability is the
-// whole game — see docs/protocol/transcript-model.md).
+import { execFileSync } from "node:child_process";
+export interface GitContext {
+  gitRoot: string;
+  currentBranch: string;
+  mainBranch: string;
+  gitUser: string;
+  status: string;
+  recentCommits: string;
+}
 
-export function buildSystemPrompt(cwd: string): string {
-  return [
-    "You are stackpilot, a concise coding agent operating in a terminal.",
+function execGit(args: string[], cwd: string): string {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8" }).trimEnd();
+  } catch {
+    return "";
+  }
+}
+
+export function getGitContext(cwd: string): GitContext | null {
+  try {
+    execFileSync("git", ["rev-parse", "--git-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+  } catch {
+    return null;
+  }
+
+  const currentBranch = execGit(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  const shortBranch =
+    currentBranch && !currentBranch.startsWith("refs/")
+      ? currentBranch
+      : "(detached)";
+
+  const gitUser =
+    execGit(["config", "user.name"], cwd) ||
+    execGit(["config", "user.email"], cwd) ||
+    "(unknown)";
+
+  const status = execGit(["status", "--short"], cwd) || "(clean)";
+
+  const recentCommits = execGit(["log", "--oneline", "--max-count=5"], cwd);
+
+  return {
+    gitRoot: execGit(["rev-parse", "--show-toplevel"], cwd),
+    currentBranch: shortBranch,
+    mainBranch: "main",
+    gitUser,
+    status,
+    recentCommits,
+  };
+}
+
+export function buildSystemPrompt(
+  cwd: string,
+  model: string,
+  instructions: string,
+  skillsText: string,
+  gitCtx: GitContext | null,
+): string {
+  const sections: string[] = [];
+
+  sections.push(
+    "You are stackpilot, a lean coding agent operating in a terminal.",
     "",
     `Working directory: ${cwd}`,
+    `Platform: ${process.platform}`,
+    `Shell: ${process.env.SHELL ?? "unknown"}`,
+    `Model: ${model}`,
+  );
+
+  if (gitCtx) {
+    sections.push(
+      "",
+      `Git root: ${gitCtx.gitRoot}`,
+      `Current branch: ${gitCtx.currentBranch}`,
+      `Main branch: ${gitCtx.mainBranch}`,
+      `Git user: ${gitCtx.gitUser}`,
+      "",
+      "Status (snapshot — may be stale):",
+      gitCtx.status || "(clean)",
+    );
+    if (gitCtx.recentCommits) {
+      sections.push("", "Recent commits:", gitCtx.recentCommits);
+    }
+  }
+
+  sections.push(
     "",
-    "Rules:",
-    "- Use the provided tools to read, search, and modify files.",
-    "- Prefer Grep/Glob for discovery over guessing paths.",
-    "- Make minimal, focused changes. No commentary inside files.",
+    "# Security and safety",
+    "- Carefully consider reversibility and blast radius before acting.",
+    "- For destructive or hard-to-reverse operations (rm -rf, force-push, deleting branches, dropping tables), ask the user to confirm first.",
+    "- Before any command that could discard uncommitted work (git checkout/reset/clean), run `git status` first.",
+    "- Never expose secrets, keys, or tokens in code or output.",
+    "- If you discover unexpected files, branches, or config, investigate before deleting.",
+    "- When in doubt about whether to keep something, move it aside rather than delete it.",
+    "",
+    "# Coding conventions",
+    "- Read before you write. Never guess file contents.",
+    "- Make minimal, focused changes. Don't refactor unrelated code.",
+    "- A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper.",
+    "- Don't design for hypothetical future requirements.",
+    "- Default to writing no comments. Only add one when the WHY is non-obvious.",
+    "- Don't explain what code does — well-named identifiers do that.",
+    "- Don't add error handling for scenarios that can't happen. Trust internal code and framework guarantees.",
+    "- Only validate at system boundaries (user input, external APIs).",
+    "- Remove dead code instead of commenting it out.",
+    "- Prefer editing existing files to creating new ones.",
+    "",
+    "# Tool usage",
+    "- Prefer dedicated tools (Read, Edit, Write, Grep, Glob) over Bash when one fits.",
+    "- Use Grep or Glob for discovery over guessing paths.",
+    "- Make independent tool calls in parallel to maximize efficiency.",
+    "- If one operation must complete before another, run them sequentially.",
     "- Keep answers short; this is a CLI.",
-    "- Never invent file contents — read before you edit.",
-  ].join("\n");
+    "- When referencing code, use the pattern file_path:line_number.",
+    "- For broad exploration or research needing more than 3 queries, use Agent with subagent_type=explore.",
+    "- Use Agent for focused tasks that would bloat the main conversation.",
+    "- Subagent results are text-only — delegate research, don't duplicate it.",
+  );
+
+  if (skillsText.length > 0) {
+    sections.push("", skillsText);
+  }
+
+  if (instructions.length > 0) {
+    sections.push(
+      "",
+      "# Project and user instructions",
+      "The following instructions apply. More specific (deeper directory) instructions take precedence over more general (project root) ones.",
+      "",
+      instructions,
+    );
+  }
+
+  return sections.join("\n");
 }

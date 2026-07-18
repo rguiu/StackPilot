@@ -10,12 +10,46 @@
 # automatically. 0 disables.
 autoCompactAtTokens = 160000
 
+# Max chars per tool_result before paging kicks in. Longer outputs are
+# truncated in the message stack (full content stored in memory — use the
+# ReadMore tool to expand). 0 disables paging.
+# maxToolResultChars = 10000
+
+# Retry behaviour for transient failures (5xx, 429, network errors).
+# Exponential backoff with jitter. Set maxRetries = 0 to disable.
+# [retry]
+# maxRetries = 3
+# baseDelayMs = 1000
+# maxDelayMs = 30000
+
 # Tools sent to the model (schema presence, not just permission). Fewer
 # tools = smaller static cache prefix = cheaper sessions. Omit the section
 # to enable all. Order does not matter here — the canonical registry order
 # is always preserved on the wire (cache-prefix stability).
 # [tools]
 # enabled = ["Read", "Edit", "Bash", "Grep", "Glob"]
+
+# Hooks: shell commands that execute at lifecycle points. Advisory
+# (fail-open): a failing hook never blocks the agent. stdout is shown to
+# the model as a <system-reminder> and echoed to the terminal. Receives a
+# JSON context on stdin + env vars (STACKPILOT_HOOK, STACKPILOT_TOOL).
+# [hooks]
+#
+# [hooks.pre_tool]
+# command = "./scripts/lint-staged.sh"
+# timeoutMs = 5000
+#
+# [hooks.post_tool]
+# command = "./scripts/notify.sh"
+# timeoutMs = 5000
+#
+# [hooks.session_start]
+# command = "./scripts/setup-env.sh"
+# timeoutMs = 10000
+#
+# [hooks.session_end]
+# command = "./scripts/extract-memory.sh"
+# timeoutMs = 10000
 
 # Pricing per million tokens, keyed by the model id the SERVER reports
 # (dated snapshot). A date-suffix-stripped fallback is tried, so the bare
