@@ -42,7 +42,7 @@ append-only) but is no longer sent.
 | `<analysis>` + `<summary>` blocks    | summary only — we don't pay for scratchpad output      |
 | their instruction text               | our own wording, same structural intent                |
 | auto threshold undisclosed (~92-95%) | `autoCompactAtTokens` config, default 160k, 0 disables |
-| recap/microcompact variants          | not cloned (PLAN #7)                                   |
+| recap/microcompact variants          | not implemented (PLAN #7)                              |
 
 Same disk semantics (`isCompactSummary` field name kept for fixture
 compatibility), same prefix-reuse economics, same append-only guarantee.

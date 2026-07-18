@@ -1,10 +1,9 @@
 # stackpilot
 
-A lean coding agent with full control of the message stack. Behavioral clone of
-Claude Code's core, rebuilt smaller — not by guessing, but by recording real
-sessions through the
-[ai-agent-profiler](https://github.com/rguiu/ai-agent-profiler) proxy and
-extracting the wire protocol.
+A lean coding agent with full control of the message stack. An independent
+client that matches Claude Code's behavioral core, rebuilt smaller — not by
+guessing, but by studying my own sessions recorded through the
+[ai-agent-profiler](https://github.com/rguiu/ai-agent-profiler) proxy.
 
 **Why?** Claude Code is the best coding agent, but it's a black box — you can't
 see what's in the message stack, can't tune caching, can't experiment with
@@ -13,11 +12,13 @@ exposed and controllable. Same loop, matching tool schemas where they overlap,
 and client-side cache awareness that Claude Code lacks (fingerprint diffing
 predicts and verifies cache behavior before the server reports it).
 
-**Built from traces, not docs.** Every feature was verified against recorded
-Claude Code sessions: system prompt, tool schemas, cache breakpoint placement,
-compaction protocol, transcript tree structure. See
-[docs/protocol/](docs/protocol/) for the raw findings and
-[fixtures/traces/](fixtures/traces/) for the golden traces.
+**Built from traces, not docs.** Every feature was verified against my own
+recorded Claude Code sessions: system prompt structure, tool schemas, cache
+breakpoint placement, compaction protocol, transcript tree structure. All
+traces were captured locally, from my own sessions, with my own API key — no
+Claude Code source was used. StackPilot is an independent client for the
+public Messages API. See [docs/protocol/](docs/protocol/) for the findings
+and [fixtures/traces/](fixtures/traces/) for the golden traces.
 
 **Early but functional.** Phases P0 through P5 are complete — streaming loop,
 14 tools (including subagents and skills), prompt caching with client fingerprint

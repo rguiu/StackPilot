@@ -1,11 +1,11 @@
 # stackpilot — Plan
 
 A lean, cost-optimal coding agent with a fully controllable message stack.
-Behavioral clone of Claude Code's core, minus the low-value surface. Built in
+Matches Claude Code's behavioral core, minus the low-value surface. Built in
 TypeScript, instrumented from day 1 through the
 [ai-agent-profiler](../ai-agent-profiler) (`aap`) proxy.
 
-**Strategy in one line:** clone the behavioral core (loop, tools, session
+**Strategy in one line:** match the behavioral core (loop, tools, session
 tree, caching, compaction), measure everything, and win on context-stack
 control + cost routing — not on feature count.
 
@@ -183,9 +183,9 @@ Recording (Haiku, all aliases pinned in `~/.claude/settings.json`):
 | subagent-plan-todo | Task sidechains, plan mode, system-reminders | recorded |
 | rewind-resume      | transcript tree branching, resume reload     | recorded |
 
-Extraction targets in `docs/protocol/`:
+Analysis targets in `docs/protocol/`:
 
-- `system-prompt.md` — full text, what varies per request kind
+- `system-prompt.md` — structure and sizes, what varies per request kind
 - `tools.json` — exact tool schemas (keep signatures, rewrite internals)
 - `cache-breakpoints.md` — cache_control placement per turn, what breaks the prefix
 - `compaction.md` — compact prompt + reminder formats/injection points

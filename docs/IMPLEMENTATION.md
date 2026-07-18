@@ -35,12 +35,12 @@ stackpilot/
   docs/
     PLAN.md               roadmap, feature table, phase status
     IMPLEMENTATION.md     this file
-    protocol/             extracted Claude Code wire behavior (P0 output)
-      system-prompt.md    3-block system prompt, cache_control markers
+    protocol/             observed Claude Code wire behavior (P0 output)
+      system-prompt.md    3-block structure analysis, cache_control markers
       tools.json          29 tool schemas as Claude Code 2.1.212 sends them
       cache-breakpoints.md  observed cache_control placement per request
       transcript-model.md disk↔memory↔wire mapping, tree numbers
-      compact-session/    same extraction for a /compact session
+      compact-session/    same analysis for a /compact session
   fixtures/
     traces/               golden aap NDJSON traces (5 scenarios, redacted)
     transcripts/          rewind-session.jsonl — reducer ground truth

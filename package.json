@@ -2,7 +2,7 @@
   "name": "stackpilot",
   "version": "0.1.0",
   "type": "module",
-  "description": "A lean, cost-optimal coding agent with a fully controllable message stack. Behavioral clone of Claude Code, rebuilt smaller.",
+  "description": "A lean, cost-optimal coding agent with a fully controllable message stack. An independent client matching Claude Code's behavioral core, rebuilt smaller.",
   "license": "MIT",
   "private": true,
   "author": "Raul Guiu",
