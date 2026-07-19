@@ -74,7 +74,10 @@ const sysMd = [
     const cc = block.cache_control
       ? `\`${JSON.stringify(block.cache_control)}\``
       : "—";
-    const hash = createHash("sha256").update(text).digest("hex").slice(0, 12);
+    const sanitized = text.match(/sha256:([a-f0-9]{12})/);
+    const hash = sanitized
+      ? sanitized[1]
+      : createHash("sha256").update(text).digest("hex").slice(0, 12);
     return `| ${i} | ${cc} | ${text.length} | ${text.split("\n").length} | \`${hash}\` |`;
   }),
   "",
