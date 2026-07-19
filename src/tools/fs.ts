@@ -2,7 +2,8 @@
 // Read returns numbered lines; Edit requires a unique exact match.
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname } from "node:path";
+import { absPath } from "../util/path.js";
 import {
   requireString,
   truncate,
@@ -14,15 +15,11 @@ const MAX_LINES = 2000;
 const MAX_LINE_LEN = 2000;
 const MAX_OUTPUT = 40_000;
 
-function absPath(cwd: string, p: string): string {
-  return isAbsolute(p) ? p : resolve(cwd, p);
-}
-
 export const readTool: ToolDef = {
   name: "Read",
   description:
     "Read a file. Returns line-numbered content. Use offset/limit for large files.",
-  readOnly: true,
+  runPermitless: true,
   inputSchema: {
     type: "object",
     properties: {
@@ -63,7 +60,7 @@ export const readTool: ToolDef = {
 export const writeTool: ToolDef = {
   name: "Write",
   description: "Write content to a file, creating parent directories.",
-  readOnly: false,
+  runPermitless: false,
   inputSchema: {
     type: "object",
     properties: {
@@ -93,7 +90,7 @@ export const editTool: ToolDef = {
   name: "Edit",
   description:
     "Exact-string replacement in a file. old_string must match exactly once unless replace_all.",
-  readOnly: false,
+  runPermitless: false,
   inputSchema: {
     type: "object",
     properties: {

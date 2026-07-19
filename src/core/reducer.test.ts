@@ -44,7 +44,7 @@ describe("reduce on synthetic trees", () => {
     type,
     uuid,
     parentUuid,
-    message: { role: "user", content: uuid },
+    message: { role: "user", content: [{ type: "text" as const, text: uuid }] },
   });
 
   it("handles the empty session", () => {
@@ -70,7 +70,9 @@ describe("reduce on synthetic trees", () => {
     expect(r.stats.leafCount).toBe(2);
     expect(r.stats.branchPoints).toBe(1);
     expect(r.leafUuid).toBe("d");
-    expect(r.messages.map((m) => m.content)).toEqual(["a", "d"]);
+    expect(
+      r.messages.map((m) => (m.content[0] as { text: string }).text),
+    ).toEqual(["a", "d"]);
   });
 
   it("ignores uuid-less metadata events for pathing", () => {
@@ -85,25 +87,38 @@ describe("reduce on synthetic trees", () => {
     const summary: SessionEvent = {
       ...ev("s", "b"),
       isCompactSummary: true,
-      message: { role: "user", content: "SUMMARY" },
+      message: {
+        role: "user",
+        content: [{ type: "text" as const, text: "SUMMARY" }],
+      },
     };
     const r = reduce([ev("a", null), ev("b", "a"), summary, ev("c", "s")]);
     expect(r.stats.activePathEvents).toBe(4); // tree unaffected
-    expect(r.messages.map((m) => m.content)).toEqual(["SUMMARY", "c"]);
+    expect(
+      r.messages.map((m) => (m.content[0] as { text: string }).text),
+    ).toEqual(["SUMMARY", "c"]);
   });
 
   it("uses only the LAST compact summary", () => {
     const s1: SessionEvent = {
       ...ev("s1", "a"),
       isCompactSummary: true,
-      message: { role: "user", content: "FIRST" },
+      message: {
+        role: "user",
+        content: [{ type: "text" as const, text: "FIRST" }],
+      },
     };
     const s2: SessionEvent = {
       ...ev("s2", "s1"),
       isCompactSummary: true,
-      message: { role: "user", content: "SECOND" },
+      message: {
+        role: "user",
+        content: [{ type: "text" as const, text: "SECOND" }],
+      },
     };
     const r = reduce([ev("a", null), s1, s2, ev("z", "s2")]);
-    expect(r.messages.map((m) => m.content)).toEqual(["SECOND", "z"]);
+    expect(
+      r.messages.map((m) => (m.content[0] as { text: string }).text),
+    ).toEqual(["SECOND", "z"]);
   });
 });

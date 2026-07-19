@@ -8,8 +8,10 @@
 // the API-visible conversation at the last such flag. Nothing is deleted.
 
 import { reduce, toApiMessages } from "./reducer.js";
-import { applyCacheControl, type CacheLedger } from "./cache.js";
+import { applyCacheControl } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
+import { textOf } from "../util/message.js";
+import type { ContentBlock } from "../types.js";
 import type { ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
@@ -47,7 +49,7 @@ export const COMPACT_INSTRUCTION = [
 export function buildCompactRequest(
   system: string,
   tools: unknown[],
-  messages: { role: "user" | "assistant"; content: unknown }[],
+  messages: { role: "user" | "assistant"; content: ContentBlock[] }[],
 ): MessagesRequest {
   return applyCacheControl(system, tools, [
     ...messages,
@@ -63,7 +65,6 @@ export interface CompactDeps {
   registry: Registry;
   config: TransportConfig;
   system: string;
-  ledger?: CacheLedger;
   pricing?: Record<string, ModelPricing>;
   signal?: AbortSignal;
   stream(
@@ -75,22 +76,10 @@ export interface CompactDeps {
 }
 
 export interface CompactResult {
-  droppedMessages: number;
+  totalMessages: number;
   summaryChars: number;
   usage: UsageInfo;
   costUsd: number | null;
-}
-
-function textOf(content: unknown[]): string {
-  return content
-    .map((b) =>
-      typeof b === "object" &&
-      b !== null &&
-      (b as { type?: string }).type === "text"
-        ? ((b as { text?: string }).text ?? "")
-        : "",
-    )
-    .join("");
 }
 
 // Returns null when there is nothing to compact. Throws on an unusable
@@ -110,14 +99,12 @@ export async function runCompact(
     registry.schemas(),
     toApiMessages(reduced.messages),
   );
-  deps.ledger?.beforeRequest(request);
   const result = await deps.stream(
     compactConfig,
     request,
     () => {},
     deps.signal,
   );
-  deps.ledger?.afterResponse(result.usage);
 
   const summary = textOf(result.content).trim();
   if (summary.length === 0) {
@@ -139,7 +126,7 @@ export async function runCompact(
 
   const rates = deps.pricing ? resolveRates(result.model, deps.pricing) : null;
   return {
-    droppedMessages: reduced.messages.length,
+    totalMessages: reduced.messages.length,
     summaryChars: summary.length,
     usage: result.usage,
     costUsd: rates ? computeCostUsd(result.usage, rates) : null,

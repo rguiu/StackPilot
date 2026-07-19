@@ -30,6 +30,7 @@ import type { HookConfig } from "../core/hooks.js";
 import type { SessionState } from "../core/policies.js";
 
 export interface AppDeps {
+  cwd: string;
   store: SessionStore;
   registry: Registry;
   config: TransportConfig;
@@ -195,7 +196,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
   process.stdout.write(
     [
       `${cyan("stackpilot")} ${dim("·")} ${config.model} ${dim("·")} session ${store.sessionId.slice(0, 8)}`,
-      dim(`cwd ${process.cwd()}${costStr}`),
+      dim(`cwd ${deps.cwd}${costStr}`),
       dim("esc interrupts · ! for shell · /help for commands"),
       "",
     ].join("\n"),
@@ -211,7 +212,6 @@ export async function runApp(deps: AppDeps): Promise<void> {
         registry,
         config,
         system,
-        ledger,
         pricing,
         signal: interrupt.signal,
         stream,
@@ -224,7 +224,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
       const cost = res.costUsd !== null ? ` · ${formatUsd(res.costUsd)}` : "";
       process.stdout.write(
         dim(
-          `✂ compacted (${reason}): ${res.droppedMessages} messages → ${res.summaryChars}-char summary${cost}`,
+          `✂ compacted (${reason}): ${res.totalMessages} messages → ${res.summaryChars}-char summary${cost}`,
         ) + "\n",
       );
     } catch (err) {
@@ -269,7 +269,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
       options: registry.defs.map((d) => ({
         value: d.name,
         label: d.name,
-        hint: d.readOnly ? "read-only" : "mutating",
+        hint: d.runPermitless ? "read-only" : "mutating",
       })),
       initialValues: registry.enabledNames(),
       required: false,
@@ -345,127 +345,133 @@ export async function runApp(deps: AppDeps): Promise<void> {
     );
   }
 
-  for (;;) {
-    // Bottom-bar: separator + status before each prompt
-    if (turns.length > 0) {
-      const last = turns[turns.length - 1];
-      if (last) process.stdout.write("\n");
-    } else {
-      process.stdout.write("\n");
-    }
-
-    let line: string;
-    try {
-      line = (await rl.question(`${cyan("›")} `)).trim();
-    } catch {
-      break;
-    }
-    if (line === "") continue;
-
-    if (line.startsWith("!")) {
-      const cmd = line.slice(1).trim();
-      if (cmd) {
-        const { execFileSync } = await import("node:child_process");
-        try {
-          const output = execFileSync("bash", ["-c", cmd], {
-            cwd: process.cwd(),
-            encoding: "utf8",
-            maxBuffer: 1 * 1024 * 1024,
-            timeout: 30_000,
-          });
-          process.stdout.write(output.trimEnd() + "\n");
-        } catch (err: unknown) {
-          const e = err as {
-            stdout?: string;
-            stderr?: string;
-            message?: string;
-          };
-          if (typeof e.stdout === "string" && e.stdout.trim())
-            process.stdout.write(e.stdout.trim() + "\n");
-          if (typeof e.stderr === "string" && e.stderr.trim())
-            process.stderr.write(e.stderr.trim() + "\n");
-          if (!e.stdout && !e.stderr)
-            process.stderr.write((e.message ?? "command failed") + "\n");
-        }
-      }
-      continue;
-    }
-
-    if (line.startsWith("/")) {
-      if (line === "/exit" || line === "/quit") break;
-      else if (line === "/help") process.stdout.write(helpText() + "\n");
-      else if (line === "/todos")
-        process.stdout.write(todoBox(registry.todoState.todos) + "\n");
-      else if (line === "/usage")
-        process.stdout.write(usageSummary(turns) + "\n");
-      else if (line === "/compact") await doCompact("manual");
-      else if (line === "/config") await doConfig();
-      else
-        process.stdout.write(
-          dim(`unknown command: ${line} (try /help)`) + "\n",
-        );
-      continue;
-    }
-
-    interrupt.reset();
-    interrupt.arm();
-    streamedAnything = false;
-    md.reset();
-    startSpinner("thinking…");
-    try {
-      const stats = await runTurn(
-        {
-          store,
-          registry,
-          config,
-          system,
-          io,
-          ledger,
-          pricing,
-          signal: interrupt.signal,
-          stream,
-          hooks: deps.hooks,
-          sessionState: deps.sessionState,
-          maxToolResultChars: deps.maxToolResultChars,
-        },
-        line,
-      );
-      turns.push(stats);
-      stopSpinner();
-      const flushed = md.flush();
-      if (flushed.length > 0) process.stdout.write(flushed + "\n");
-      process.stdout.write("\n" + statsLine(stats) + "\n");
-      for (const note of stats.notes) {
-        process.stdout.write(dim(`⚠ ${note}`) + "\n");
-      }
-      if (
-        autoCompactState.value > 0 &&
-        stats.lastRequestInputTokens >= autoCompactState.value
-      ) {
-        process.stdout.write(
-          dim(
-            `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactState.value} threshold — auto-compacting`,
-          ) + "\n",
-        );
-        await doCompact("auto");
-      }
-    } catch (err) {
-      stopSpinner();
-      md.reset();
-      if (isAbort(err)) {
-        process.stdout.write("\n" + interrupted() + "\n");
+  try {
+    for (;;) {
+      // Bottom-bar: separator + status before each prompt
+      if (turns.length > 0) {
+        const last = turns[turns.length - 1];
+        if (last) process.stdout.write("\n");
       } else {
-        interrupt.disarm();
-        rl.close();
-        throw err;
+        process.stdout.write("\n");
       }
-    } finally {
-      interrupt.disarm();
-    }
-  }
 
-  rl.close();
-  process.stdout.write(
-    "\n" + dim(`session ${store.sessionId} saved · resume with -c`) + "\n",
-  );
+      let line: string;
+      try {
+        line = (await rl.question(`${cyan("›")} `)).trim();
+      } catch {
+        break;
+      }
+      if (line === "") continue;
+
+      if (line.startsWith("!")) {
+        const cmd = line.slice(1).trim();
+        if (cmd) {
+          const { execFileSync } = await import("node:child_process");
+          try {
+            const output = execFileSync("bash", ["-c", cmd], {
+              cwd: deps.cwd,
+              encoding: "utf8",
+              maxBuffer: 1 * 1024 * 1024,
+              timeout: 30_000,
+            });
+            process.stdout.write(output.trimEnd() + "\n");
+          } catch (err: unknown) {
+            const e = err as {
+              stdout?: string;
+              stderr?: string;
+              message?: string;
+            };
+            if (typeof e.stdout === "string" && e.stdout.trim())
+              process.stdout.write(e.stdout.trim() + "\n");
+            if (typeof e.stderr === "string" && e.stderr.trim())
+              process.stderr.write(e.stderr.trim() + "\n");
+            if (!e.stdout && !e.stderr)
+              process.stderr.write((e.message ?? "command failed") + "\n");
+          }
+        }
+        continue;
+      }
+
+      if (line.startsWith("/")) {
+        if (line === "/exit" || line === "/quit") break;
+        else if (line === "/help") process.stdout.write(helpText() + "\n");
+        else if (line === "/todos")
+          process.stdout.write(todoBox(registry.todoState.todos) + "\n");
+        else if (line === "/usage")
+          process.stdout.write(usageSummary(turns) + "\n");
+        else if (line === "/compact") await doCompact("manual");
+        else if (line === "/config") await doConfig();
+        else
+          process.stdout.write(
+            dim(`unknown command: ${line} (try /help)`) + "\n",
+          );
+        continue;
+      }
+
+      interrupt.reset();
+      interrupt.arm();
+      streamedAnything = false;
+      md.reset();
+      startSpinner("thinking…");
+      try {
+        const stats = await runTurn(
+          {
+            cwd: deps.cwd,
+            store,
+            registry,
+            config,
+            system,
+            io,
+            ledger,
+            pricing,
+            signal: interrupt.signal,
+            stream,
+            hooks: deps.hooks,
+            sessionState: deps.sessionState,
+            maxToolResultChars: deps.maxToolResultChars,
+          },
+          line,
+        );
+        turns.push(stats);
+        stopSpinner();
+        const flushed = md.flush();
+        if (flushed.length > 0) process.stdout.write(flushed + "\n");
+        process.stdout.write("\n" + statsLine(stats) + "\n");
+        for (const note of stats.notes) {
+          process.stdout.write(dim(`⚠ ${note}`) + "\n");
+        }
+        if (
+          autoCompactState.value > 0 &&
+          stats.lastRequestInputTokens >= autoCompactState.value
+        ) {
+          process.stdout.write(
+            dim(
+              `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactState.value} threshold — auto-compacting`,
+            ) + "\n",
+          );
+          await doCompact("auto");
+        }
+      } catch (err) {
+        stopSpinner();
+        md.reset();
+        if (isAbort(err)) {
+          process.stdout.write("\n" + interrupted() + "\n");
+        } else {
+          interrupt.disarm();
+          rl.close();
+          throw err;
+        }
+      } finally {
+        interrupt.disarm();
+      }
+    }
+
+    process.stdout.write(
+      "\n" + dim(`session ${store.sessionId} saved · resume with -c`) + "\n",
+    );
+  } finally {
+    interrupt.disarm();
+    rl.close();
+    process.stdout.write("\x1b[?25h"); // restore cursor visibility
+  }
 }

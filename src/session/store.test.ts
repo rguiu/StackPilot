@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { firstUserText, SessionStore } from "./store.js";
 import type { SessionEvent } from "./events.js";
+import type { ContentBlock } from "../types.js";
 
 const home = mkdtempSync(join(tmpdir(), "sp-store-"));
 const cwd = "/fake/project";
@@ -41,7 +42,7 @@ describe("SessionStore.summariesFor", () => {
 });
 
 describe("firstUserText", () => {
-  const user = (content: unknown): SessionEvent => ({
+  const user = (content: ContentBlock[]): SessionEvent => ({
     type: "user",
     uuid: "u1",
     parentUuid: null,
@@ -55,7 +56,16 @@ describe("firstUserText", () => {
   });
 
   it("reads plain string content (Claude transcripts)", () => {
-    expect(firstUserText([user("plain prompt")])).toBe("plain prompt");
+    const ev: SessionEvent = {
+      type: "user",
+      uuid: "u1",
+      parentUuid: null,
+      message: {
+        role: "user",
+        content: "plain prompt" as unknown as ContentBlock[],
+      },
+    };
+    expect(firstUserText([ev])).toBe("plain prompt");
   });
 
   it("skips tool_result-only user events", () => {

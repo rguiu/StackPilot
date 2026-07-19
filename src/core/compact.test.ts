@@ -100,7 +100,7 @@ describe("runCompact", () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.droppedMessages).toBe(2);
+    expect(result!.totalMessages).toBe(2);
     expect(result!.costUsd).toBeGreaterThan(0);
 
     const after = reduce(store.all());

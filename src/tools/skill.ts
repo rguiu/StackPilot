@@ -108,7 +108,7 @@ export function createSkillTool(skills: Map<string, SkillInfo>): ToolDef {
       "Load a specialized skill when the task matches a skill's description. " +
       "Skills provide project-specific instructions. Use the name from the " +
       "available-skills list.",
-    readOnly: true,
+    runPermitless: true,
     inputSchema: {
       type: "object",
       properties: {

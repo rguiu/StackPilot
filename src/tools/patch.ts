@@ -2,12 +2,8 @@
 // changes — fewer tokens than quoting unchanged surrounding lines.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { absPath } from "../util/path.js";
 import { requireString, type ToolDef, type ToolResult } from "./types.js";
-
-function absPath(cwd: string, p: string): string {
-  return isAbsolute(p) ? p : resolve(cwd, p);
-}
 
 interface Hunk {
   srcStart: number;
@@ -123,7 +119,7 @@ export const patchTool: ToolDef = {
     "Apply a unified diff to a file. Use for small, targeted changes — " +
     "fewer tokens than Edit since unchanged context doesn't need quoting. " +
     "The patch must apply cleanly to the current file contents.",
-  readOnly: false,
+  runPermitless: false,
   inputSchema: {
     type: "object",
     properties: {

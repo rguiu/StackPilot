@@ -17,6 +17,7 @@ import {
   parseEventLines,
   type SessionEvent,
 } from "./events.js";
+import { firstTextBlock } from "../util/message.js";
 
 export function projectSlug(cwd: string): string {
   return cwd.replace(/[/.]/g, "-");
@@ -38,14 +39,8 @@ export interface SessionSummary {
 export function firstUserText(events: readonly SessionEvent[]): string | null {
   for (const e of events) {
     if (e.type !== "user" || !e.message) continue;
-    const content = e.message.content;
-    if (typeof content === "string" && content.trim()) return content.trim();
-    if (!Array.isArray(content)) continue;
-    for (const block of content as { type?: string; text?: string }[]) {
-      if (block.type === "text" && block.text?.trim()) {
-        return block.text.trim();
-      }
-    }
+    const text = firstTextBlock(e.message.content);
+    if (text) return text;
   }
   return null;
 }
@@ -54,6 +49,7 @@ export class SessionStore {
   readonly sessionId: string;
   readonly path: string;
   private events: SessionEvent[];
+  private writing = false;
 
   private constructor(path: string, sessionId: string, events: SessionEvent[]) {
     this.path = path;
@@ -124,14 +120,24 @@ export class SessionStore {
     isCompactSummary?: boolean;
     meta?: Record<string, unknown>;
   }): SessionEvent {
-    const full: SessionEvent = {
-      ...event,
-      uuid: randomUUID(),
-      timestamp: new Date().toISOString(),
-    };
-    assertWritable(full);
-    appendFileSync(this.path, JSON.stringify(full) + "\n", "utf8");
-    this.events.push(full);
-    return full;
+    if (this.writing) {
+      throw new Error(
+        "concurrent append to session store — events must be serialized",
+      );
+    }
+    this.writing = true;
+    try {
+      const full: SessionEvent = {
+        ...event,
+        uuid: randomUUID(),
+        timestamp: new Date().toISOString(),
+      };
+      assertWritable(full);
+      appendFileSync(this.path, JSON.stringify(full) + "\n", "utf8");
+      this.events.push(full);
+      return full;
+    } finally {
+      this.writing = false;
+    }
   }
 }

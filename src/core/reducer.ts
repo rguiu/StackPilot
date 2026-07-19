@@ -7,6 +7,7 @@
 // file order) back to the root. Events without a uuid are pure metadata.
 
 import type { ApiMessage, SessionEvent } from "../session/events.js";
+import type { ContentBlock } from "../types.js";
 
 export interface TreeStats {
   totalEvents: number;
@@ -103,6 +104,6 @@ export function reduce(events: readonly SessionEvent[]): ReducedSession {
 // Strip usage before sending to the API (usage is a local record, not input).
 export function toApiMessages(
   messages: readonly ApiMessage[],
-): { role: "user" | "assistant"; content: unknown }[] {
+): { role: "user" | "assistant"; content: ContentBlock[] }[] {
   return messages.map((m) => ({ role: m.role, content: m.content }));
 }

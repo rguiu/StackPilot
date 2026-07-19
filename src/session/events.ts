@@ -2,9 +2,11 @@
 // (uuid/parentUuid tree, user|assistant events carry an API `message`) so the
 // reducer can replay both our sessions and recorded Claude transcripts.
 
+import type { ContentBlock } from "../types.js";
+
 export interface ApiMessage {
   role: "user" | "assistant";
-  content: unknown;
+  content: ContentBlock[];
   usage?: {
     input_tokens?: number;
     output_tokens?: number;

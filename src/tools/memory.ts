@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ToolDef, type ToolResult } from "./types.js";
+import { firstTextBlock } from "../util/message.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -108,17 +109,8 @@ function extractMeta(jsonlPath: string): SessionMeta | null {
 
     if (event.type === "user" && !firstPrompt) {
       if (msg?.content) {
-        if (Array.isArray(msg.content)) {
-          for (const block of msg.content) {
-            const b = block as { type?: string; text?: string };
-            if (b.type === "text" && b.text) {
-              firstPrompt = b.text.slice(0, 500);
-              break;
-            }
-          }
-        } else if (typeof msg.content === "string") {
-          firstPrompt = msg.content.slice(0, 500);
-        }
+        const text = firstTextBlock(msg.content);
+        if (text) firstPrompt = text.slice(0, 500);
       }
     }
 
@@ -249,7 +241,7 @@ export function createSearchMemoryTool(db: Database.Database): ToolDef {
     description:
       "Search past sessions by keyword (FTS over prompts, CWDs, branches). " +
       "Returns matching session IDs, first prompts, and timestamps.",
-    readOnly: true,
+    runPermitless: true,
     inputSchema: {
       type: "object",
       properties: {
@@ -322,7 +314,7 @@ export function createSearchFilesTool(db: Database.Database): ToolDef {
     description:
       "Find sessions that read or wrote a specific file path. Use to find " +
       "past work on a particular file.",
-    readOnly: true,
+    runPermitless: true,
     inputSchema: {
       type: "object",
       properties: {

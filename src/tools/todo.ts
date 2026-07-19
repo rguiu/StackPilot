@@ -21,7 +21,7 @@ export function createTodoTool(state: { todos: TodoItem[] }): ToolDef {
     name: "TodoWrite",
     description:
       "Replace the session todo list. Use for multi-step tasks; keep statuses current.",
-    readOnly: true,
+    runPermitless: true,
     inputSchema: {
       type: "object",
       properties: {

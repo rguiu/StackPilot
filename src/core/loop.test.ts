@@ -56,6 +56,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
   it("backfills a synthetic tool_result when the permission prompt aborts", async () => {
     const store = SessionStore.create("/fake/cwd", home);
     const deps: TurnDeps = {
+      cwd: "/fake/cwd",
       store,
       registry: createRegistry(),
       config,
@@ -86,6 +87,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
     const store = SessionStore.create("/fake/cwd", home);
     let call = 0;
     const deps: TurnDeps = {
+      cwd: "/fake/cwd",
       store,
       registry: createRegistry(),
       config,
@@ -123,6 +125,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
     let permitCalled = false;
     let call = 0;
     const deps: TurnDeps = {
+      cwd: "/fake/cwd",
       store,
       registry,
       config,

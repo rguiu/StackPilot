@@ -2,14 +2,21 @@
 // registry with the parent but runs in its own message array. Ephemeral
 // turns — not stored in the session tree.
 
+import { toolUses, accumulateUsage, textOf } from "../util/message.js";
+import type { ContentBlock } from "../types.js";
 import type { Registry } from "../tools/index.js";
 import { executeTool } from "../tools/index.js";
 import type {
   MessagesRequest,
   StreamResult,
   TransportConfig,
-  UsageInfo,
 } from "../transport/anthropic.js";
+import {
+  pageToolResults,
+  deduplicateReads,
+  evictOldResults,
+  type SessionState,
+} from "./policies.js";
 
 export interface SubagentConfig {
   description: string;
@@ -21,7 +28,12 @@ export interface SubagentConfig {
 export interface SubagentResult {
   text: string;
   toolCalls: number;
-  usage: UsageInfo;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  };
   abort: string | null;
 }
 
@@ -45,13 +57,6 @@ const GENERAL_SYSTEM = [
   "- If you can't complete the task, explain why.",
 ].join("\n");
 
-interface ToolUseBlock {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
 function pickTools(registry: Registry, type: string): unknown[] {
   if (type === "explore") {
     return registry
@@ -65,15 +70,6 @@ function pickTools(registry: Registry, type: string): unknown[] {
   return registry.schemas();
 }
 
-function toolUses(content: unknown[]): ToolUseBlock[] {
-  return content.filter(
-    (b): b is ToolUseBlock =>
-      typeof b === "object" &&
-      b !== null &&
-      (b as { type?: string }).type === "tool_use",
-  );
-}
-
 export async function runSubagent(
   config: TransportConfig,
   registry: Registry,
@@ -84,23 +80,39 @@ export async function runSubagent(
     onText: (d: string) => void,
     signal?: AbortSignal,
   ) => Promise<StreamResult>,
-  signal?: AbortSignal,
-  onText?: (d: string) => void,
+  signal: AbortSignal | undefined,
+  onText: ((d: string) => void) | undefined,
+  cwd: string,
+  sessionState?: SessionState,
+  maxToolResultChars?: number,
 ): Promise<SubagentResult> {
   const subConfig = sub.model ? { ...config, model: sub.model } : config;
   const system =
     sub.subagentType === "explore" ? EXPLORE_SYSTEM : GENERAL_SYSTEM;
   const tools = pickTools(registry, sub.subagentType ?? "general");
 
-  const messages: { role: "user" | "assistant"; content: unknown }[] = [
+  const messages: { role: "user" | "assistant"; content: ContentBlock[] }[] = [
     { role: "user", content: [{ type: "text", text: sub.prompt }] },
   ];
 
-  const usage: UsageInfo = {};
+  const usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
   let toolCalls = 0;
   let abort: string | null = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    if (sessionState) {
+      if (maxToolResultChars && maxToolResultChars > 0) {
+        pageToolResults(messages, sessionState, maxToolResultChars);
+      }
+      deduplicateReads(messages, sessionState);
+      evictOldResults(messages);
+    }
+
     const result = await stream(
       subConfig,
       {
@@ -112,7 +124,7 @@ export async function runSubagent(
       signal,
     );
 
-    accumulate(usage, result.usage);
+    accumulateUsage(usage, result.usage);
 
     messages.push({ role: "assistant", content: result.content });
 
@@ -146,26 +158,28 @@ export async function runSubagent(
         });
         continue;
       }
-      const toolResult = await executeTool(def, use.input, process.cwd());
+      const toolResult = await executeTool(def, use.input, cwd);
       results.push({
         tool_use_id: use.id,
         type: "tool_result",
         content: toolResult.output,
-        is_error: toolResult.isError === true,
+        ...(toolResult.isError === true ? { is_error: true } : {}),
       });
     }
 
-    messages.push({ role: "user", content: results });
+    messages.push({
+      role: "user",
+      content: results as unknown as ContentBlock[],
+    });
   }
 
-  const finalMsg = messages[messages.length - 1];
   let text = "";
-  if (finalMsg?.role === "assistant" && Array.isArray(finalMsg.content)) {
-    text = finalMsg.content
-      .filter((b) => (b as { type?: string }).type === "text")
-      .map((b) => (b as { text?: string }).text ?? "")
-      .join("\n")
-      .trim();
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+      text = textOf(msg.content).trim();
+      if (text) break;
+    }
   }
 
   if (!text && signal?.aborted) {
@@ -179,14 +193,4 @@ export async function runSubagent(
   }
 
   return { text, toolCalls, usage, abort };
-}
-
-function accumulate(acc: UsageInfo, usage: UsageInfo): void {
-  acc.input_tokens = (acc.input_tokens ?? 0) + (usage.input_tokens ?? 0);
-  acc.output_tokens = (acc.output_tokens ?? 0) + (usage.output_tokens ?? 0);
-  acc.cache_read_input_tokens =
-    (acc.cache_read_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  acc.cache_creation_input_tokens =
-    (acc.cache_creation_input_tokens ?? 0) +
-    (usage.cache_creation_input_tokens ?? 0);
 }
