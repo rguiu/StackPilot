@@ -60,6 +60,9 @@ describe("runSubagent text extraction", () => {
       registry,
       { description: "test", prompt: "hello" },
       async () => textResponse("all done"),
+      undefined,
+      undefined,
+      "/fake/cwd",
     );
     expect(result.text).toBe("all done");
     expect(result.abort).toBeNull();
@@ -79,6 +82,9 @@ describe("runSubagent text extraction", () => {
         // 10th (last): tool_use without text
         return toolUseOnlyResponse();
       },
+      undefined,
+      undefined,
+      "/fake/cwd",
     );
     // Even though the 10th assistant response had no text (only tool_use),
     // text from the 9th response should be found by walking backwards.
@@ -93,6 +99,9 @@ describe("runSubagent text extraction", () => {
       registry,
       { description: "test", prompt: "hello" },
       async () => toolUseOnlyResponse(),
+      undefined,
+      undefined,
+      "/fake/cwd",
     );
     expect(result.abort).toBe("no_text");
     expect(result.text).toBe("[subagent returned no text]");
@@ -110,6 +119,9 @@ describe("runSubagent text extraction", () => {
           err.name = "AbortError";
           throw err;
         },
+        undefined,
+        undefined,
+        "/fake/cwd",
       ),
     ).rejects.toThrow("aborted");
   });

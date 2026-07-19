@@ -2,18 +2,19 @@
 // registry with the parent but runs in its own message array. Ephemeral
 // turns — not stored in the session tree.
 
-import { toolUses, accumulateUsageInfo, textOf } from "../util/message.js";
+import { toolUses, accumulateUsage, textOf } from "../util/message.js";
+import type { ContentBlock } from "../types.js";
 import type { Registry } from "../tools/index.js";
 import { executeTool } from "../tools/index.js";
 import type {
   MessagesRequest,
   StreamResult,
   TransportConfig,
-  UsageInfo,
 } from "../transport/anthropic.js";
 import {
   pageToolResults,
   deduplicateReads,
+  evictOldResults,
   type SessionState,
 } from "./policies.js";
 
@@ -27,7 +28,12 @@ export interface SubagentConfig {
 export interface SubagentResult {
   text: string;
   toolCalls: number;
-  usage: UsageInfo;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  };
   abort: string | null;
 }
 
@@ -74,9 +80,9 @@ export async function runSubagent(
     onText: (d: string) => void,
     signal?: AbortSignal,
   ) => Promise<StreamResult>,
-  signal?: AbortSignal,
-  onText?: (d: string) => void,
-  cwd?: string,
+  signal: AbortSignal | undefined,
+  onText: ((d: string) => void) | undefined,
+  cwd: string,
   sessionState?: SessionState,
   maxToolResultChars?: number,
 ): Promise<SubagentResult> {
@@ -85,11 +91,16 @@ export async function runSubagent(
     sub.subagentType === "explore" ? EXPLORE_SYSTEM : GENERAL_SYSTEM;
   const tools = pickTools(registry, sub.subagentType ?? "general");
 
-  const messages: { role: "user" | "assistant"; content: unknown }[] = [
+  const messages: { role: "user" | "assistant"; content: ContentBlock[] }[] = [
     { role: "user", content: [{ type: "text", text: sub.prompt }] },
   ];
 
-  const usage: UsageInfo = {};
+  const usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
   let toolCalls = 0;
   let abort: string | null = null;
 
@@ -99,6 +110,7 @@ export async function runSubagent(
         pageToolResults(messages, sessionState, maxToolResultChars);
       }
       deduplicateReads(messages, sessionState);
+      evictOldResults(messages);
     }
 
     const result = await stream(
@@ -112,7 +124,7 @@ export async function runSubagent(
       signal,
     );
 
-    accumulateUsageInfo(usage, result.usage);
+    accumulateUsage(usage, result.usage);
 
     messages.push({ role: "assistant", content: result.content });
 
@@ -146,20 +158,19 @@ export async function runSubagent(
         });
         continue;
       }
-      const toolResult = await executeTool(
-        def,
-        use.input,
-        cwd ?? process.cwd(),
-      );
+      const toolResult = await executeTool(def, use.input, cwd);
       results.push({
         tool_use_id: use.id,
         type: "tool_result",
         content: toolResult.output,
-        is_error: toolResult.isError === true,
+        ...(toolResult.isError === true ? { is_error: true } : {}),
       });
     }
 
-    messages.push({ role: "user", content: results });
+    messages.push({
+      role: "user",
+      content: results as unknown as ContentBlock[],
+    });
   }
 
   let text = "";

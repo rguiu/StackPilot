@@ -17,9 +17,10 @@
 //      breakpoints, so appending is a hit and mutating history is a miss.
 
 import { sha256 } from "../util/hash.js";
+import type { ContentBlock } from "../types.js";
 import type { MessagesRequest, UsageInfo } from "../transport/anthropic.js";
 
-type Message = { role: "user" | "assistant"; content: unknown };
+type Message = { role: "user" | "assistant"; content: ContentBlock[] };
 
 const EPHEMERAL = { type: "ephemeral" } as const;
 
@@ -84,17 +85,11 @@ function findDynamicSplit(system: string): number {
 
 function markLastBlock(message: Message): Message {
   const { content } = message;
-  if (typeof content === "string") {
-    return {
-      role: message.role,
-      content: [{ type: "text", text: content, cache_control: EPHEMERAL }],
-    };
-  }
   if (Array.isArray(content) && content.length > 0) {
-    const blocks = content.slice(0, -1);
+    const blocks = content.slice(0, -1) as Record<string, unknown>[];
     const last = content[content.length - 1] as Record<string, unknown>;
     blocks.push({ ...last, cache_control: EPHEMERAL });
-    return { role: message.role, content: blocks };
+    return { role: message.role, content: blocks as unknown as ContentBlock[] };
   }
   return message;
 }

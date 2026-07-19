@@ -1,26 +1,12 @@
-import type { ToolUseBlock, TextBlock } from "../types.js";
+import type { ToolUseBlock, ContentBlock, TextBlock } from "../types.js";
 import type { UsageInfo } from "../transport/anthropic.js";
 
-export function toolUses(content: unknown[]): ToolUseBlock[] {
-  return content.filter((b): b is ToolUseBlock => {
-    if (typeof b !== "object" || b === null) return false;
-    return (b as { type?: unknown }).type === "tool_use";
-  });
+export function toolUses(content: ContentBlock[]): ToolUseBlock[] {
+  return content.filter((b): b is ToolUseBlock => b.type === "tool_use");
 }
 
-export function textOf(content: unknown[]): string {
-  return content
-    .map((b) => {
-      if (
-        typeof b !== "object" ||
-        b === null ||
-        (b as { type?: unknown }).type !== "text"
-      ) {
-        return "";
-      }
-      return (b as TextBlock).text;
-    })
-    .join("");
+export function textOf(content: ContentBlock[]): string {
+  return content.map((b) => (b.type === "text" ? b.text : "")).join("");
 }
 
 export function accumulateUsage(
@@ -36,16 +22,6 @@ export function accumulateUsage(
   acc.output_tokens += usage.output_tokens ?? 0;
   acc.cache_read_input_tokens += usage.cache_read_input_tokens ?? 0;
   acc.cache_creation_input_tokens += usage.cache_creation_input_tokens ?? 0;
-}
-
-export function accumulateUsageInfo(acc: UsageInfo, usage: UsageInfo): void {
-  acc.input_tokens = (acc.input_tokens ?? 0) + (usage.input_tokens ?? 0);
-  acc.output_tokens = (acc.output_tokens ?? 0) + (usage.output_tokens ?? 0);
-  acc.cache_read_input_tokens =
-    (acc.cache_read_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  acc.cache_creation_input_tokens =
-    (acc.cache_creation_input_tokens ?? 0) +
-    (usage.cache_creation_input_tokens ?? 0);
 }
 
 export function firstTextBlock(content: unknown): string | null {

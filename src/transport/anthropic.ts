@@ -1,6 +1,8 @@
 // Streaming Anthropic Messages client. No SDK — explicit fetch + SSE parse.
 // I/O only: no message-stack logic here.
 
+import type { ContentBlock } from "../types.js";
+
 export interface UsageInfo {
   input_tokens?: number;
   output_tokens?: number;
@@ -9,7 +11,7 @@ export interface UsageInfo {
 }
 
 export interface StreamResult {
-  content: unknown[]; // assistant content blocks (text / tool_use)
+  content: ContentBlock[];
   stopReason: string | null;
   usage: UsageInfo;
   model: string | null;
@@ -42,7 +44,7 @@ export interface TransportConfig {
 export interface MessagesRequest {
   system: unknown;
   tools: unknown[];
-  messages: { role: "user" | "assistant"; content: unknown }[];
+  messages: { role: "user" | "assistant"; content: ContentBlock[] }[];
 }
 
 export class ApiError extends Error {
@@ -168,20 +170,20 @@ export async function streamMessage(
     }
   }
 
-  const content = [...blocks.entries()]
+  const content: ContentBlock[] = [...blocks.entries()]
     .sort(([a], [b]) => a - b)
     .map(([, b]) => {
       if (b.type === "tool_use") {
         return {
-          type: "tool_use",
-          id: b.id,
-          name: b.name,
+          type: "tool_use" as const,
+          id: b.id ?? "",
+          name: b.name ?? "",
           input: b.partialJson
             ? (JSON.parse(b.partialJson) as Record<string, unknown>)
             : {},
         };
       }
-      return { type: "text", text: b.text ?? "" };
+      return { type: "text" as const, text: b.text ?? "" };
     });
 
   return { content, stopReason, usage, model };

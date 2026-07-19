@@ -49,6 +49,7 @@ export class SessionStore {
   readonly sessionId: string;
   readonly path: string;
   private events: SessionEvent[];
+  private writing = false;
 
   private constructor(path: string, sessionId: string, events: SessionEvent[]) {
     this.path = path;
@@ -119,14 +120,24 @@ export class SessionStore {
     isCompactSummary?: boolean;
     meta?: Record<string, unknown>;
   }): SessionEvent {
-    const full: SessionEvent = {
-      ...event,
-      uuid: randomUUID(),
-      timestamp: new Date().toISOString(),
-    };
-    assertWritable(full);
-    appendFileSync(this.path, JSON.stringify(full) + "\n", "utf8");
-    this.events.push(full);
-    return full;
+    if (this.writing) {
+      throw new Error(
+        "concurrent append to session store — events must be serialized",
+      );
+    }
+    this.writing = true;
+    try {
+      const full: SessionEvent = {
+        ...event,
+        uuid: randomUUID(),
+        timestamp: new Date().toISOString(),
+      };
+      assertWritable(full);
+      appendFileSync(this.path, JSON.stringify(full) + "\n", "utf8");
+      this.events.push(full);
+      return full;
+    } finally {
+      this.writing = false;
+    }
   }
 }

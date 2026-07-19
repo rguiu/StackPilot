@@ -3,28 +3,23 @@
 
 import { runSubagent } from "../core/subagent.js";
 import type { Registry } from "./index.js";
-import type { TransportConfig } from "../transport/anthropic.js";
+import type {
+  TransportConfig,
+  MessagesRequest,
+  StreamResult,
+} from "../transport/anthropic.js";
 import type { SessionState } from "../core/policies.js";
 import { type ToolDef, type ToolResult } from "./types.js";
 
 export interface AgentState {
-  registry: Registry;
+  getRegistry: () => Registry;
   config: TransportConfig;
   stream: (
     cfg: TransportConfig,
-    req: {
-      system: unknown;
-      tools: unknown[];
-      messages: { role: "user" | "assistant"; content: unknown }[];
-    },
+    req: MessagesRequest,
     onText: (d: string) => void,
     signal?: AbortSignal,
-  ) => Promise<{
-    content: unknown[];
-    stopReason: string | null;
-    usage: { input_tokens?: number; output_tokens?: number };
-    model: string | null;
-  }>;
+  ) => Promise<StreamResult>;
   signal?: AbortSignal;
   cwd?: string;
   sessionState?: SessionState;
@@ -79,7 +74,7 @@ export function createAgentTool(state: AgentState): ToolDef {
 
       const result = await runSubagent(
         state.config,
-        state.registry,
+        state.getRegistry(),
         {
           description,
           prompt,
@@ -88,14 +83,14 @@ export function createAgentTool(state: AgentState): ToolDef {
         state.stream,
         state.signal,
         undefined,
-        state.cwd,
+        state.cwd ?? process.cwd(),
         state.sessionState,
         state.maxToolResultChars,
       );
 
       const usage =
         result.toolCalls > 0
-          ? `\n[subagent: ${result.toolCalls} tool calls, ${result.usage.input_tokens ?? 0} in / ${result.usage.output_tokens ?? 0} out tokens]`
+          ? `\n[subagent: ${result.toolCalls} tool calls, ${result.usage.input_tokens} in / ${result.usage.output_tokens} out tokens]`
           : "";
 
       if (result.abort) {

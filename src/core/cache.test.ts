@@ -12,6 +12,7 @@ import {
 import { runTurn, type TurnDeps, type TurnIO } from "./loop.js";
 import { SessionStore } from "../session/store.js";
 import { createRegistry } from "../tools/index.js";
+import type { ContentBlock } from "../types.js";
 import type { MessagesRequest, StreamResult } from "../transport/anthropic.js";
 
 const home = mkdtempSync(join(tmpdir(), "sp-cache-"));
@@ -22,7 +23,7 @@ afterAll(() => {
 const msg = (
   role: "user" | "assistant",
   text: string,
-): { role: "user" | "assistant"; content: unknown } => ({
+): { role: "user" | "assistant"; content: ContentBlock[] } => ({
   role,
   content: [{ type: "text", text }],
 });
@@ -47,17 +48,6 @@ describe("applyCacheControl", () => {
     expect(last[last.length - 1]!.cache_control).toEqual({
       type: "ephemeral",
     });
-  });
-
-  it("converts string content so it can carry the marker", () => {
-    const req = applyCacheControl(
-      "SYS",
-      [],
-      [{ role: "user", content: "plain" }],
-    );
-    expect(req.messages[0]!.content).toEqual([
-      { type: "text", text: "plain", cache_control: { type: "ephemeral" } },
-    ]);
   });
 });
 

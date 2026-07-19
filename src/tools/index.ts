@@ -10,7 +10,7 @@ import { createTodoTool, type TodoItem } from "./todo.js";
 import { createSkillTool, type SkillInfo } from "./skill.js";
 import { createSearchMemoryTool, createSearchFilesTool } from "./memory.js";
 import { createReadMoreTool } from "./readmore.js";
-import { createAgentTool, type AgentState } from "./agent.js";
+import { createAgentTool } from "./agent.js";
 import type { SessionState } from "../core/policies.js";
 import type {
   TransportConfig,
@@ -110,15 +110,14 @@ export function createRegistry(
   };
 
   if (agentCfg) {
-    const agentState: AgentState = {
-      registry,
+    const agentTool = createAgentTool({
+      getRegistry: () => registry,
       config: agentCfg.config,
       stream: agentCfg.stream,
       cwd: agentCfg.cwd,
       sessionState,
       maxToolResultChars: agentCfg.maxToolResultChars,
-    };
-    const agentTool = createAgentTool(agentState);
+    });
     defs.push(agentTool);
     byName.set("Agent", agentTool);
   }

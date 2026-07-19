@@ -212,7 +212,6 @@ export async function runApp(deps: AppDeps): Promise<void> {
         registry,
         config,
         system,
-        ledger,
         pricing,
         signal: interrupt.signal,
         stream,
@@ -225,7 +224,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
       const cost = res.costUsd !== null ? ` · ${formatUsd(res.costUsd)}` : "";
       process.stdout.write(
         dim(
-          `✂ compacted (${reason}): ${res.droppedMessages} messages → ${res.summaryChars}-char summary${cost}`,
+          `✂ compacted (${reason}): ${res.totalMessages} messages → ${res.summaryChars}-char summary${cost}`,
         ) + "\n",
       );
     } catch (err) {

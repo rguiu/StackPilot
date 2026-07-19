@@ -22,7 +22,8 @@ import type {
 import { executeTool, type Registry } from "../tools/index.js";
 import { runHook, type HookConfig } from "./hooks.js";
 import { toolUses, accumulateUsage } from "../util/message.js";
-import type { ToolUseBlock } from "../types.js";
+import type { ToolUseBlock, ContentBlock } from "../types.js";
+import type { ToolResultBlock } from "../types.js";
 
 export interface TurnIO {
   onText(delta: string): void;
@@ -95,11 +96,14 @@ export interface TurnStats {
 const MAX_ITERATIONS = 40;
 
 function withReminders(
-  results: { tool_use_id: string }[],
+  results: ToolResultBlock[],
   reminders: string[],
-): unknown[] {
+): ContentBlock[] {
   if (reminders.length === 0) return results;
-  const blocks = reminders.map((text) => ({ type: "text" as const, text }));
+  const blocks: ContentBlock[] = reminders.map((text) => ({
+    type: "text" as const,
+    text,
+  }));
   reminders.length = 0;
   return [...blocks, ...results];
 }
@@ -198,12 +202,10 @@ export async function runTurn(
     const uses = toolUses(result.content);
     if (result.stopReason !== "tool_use" || uses.length === 0) break;
 
-    const results: { tool_use_id: string }[] = [];
+    const results: ToolResultBlock[] = [];
     try {
       for (const use of uses) {
-        results.push(
-          (await dispatchTool(deps, use, stats)) as { tool_use_id: string },
-        );
+        results.push(await dispatchTool(deps, use, stats));
       }
     } catch (err) {
       // Invariant: an assistant tool_use block stored in the tree MUST get a
@@ -218,7 +220,7 @@ export async function runTurn(
             tool_use_id: use.id,
             content: "[interrupted by user]",
             is_error: true,
-          } as { tool_use_id: string });
+          });
         }
       }
       store.append({
@@ -241,6 +243,12 @@ export async function runTurn(
     });
     if (!toolResultEvent.uuid) throw new Error("store.append returned no uuid");
     leaf = toolResultEvent.uuid;
+
+    if (i === MAX_ITERATIONS - 1) {
+      stats.notes.push(
+        `reached max iterations (${MAX_ITERATIONS}) — turn truncated`,
+      );
+    }
   }
 
   return stats;
@@ -250,7 +258,7 @@ async function dispatchTool(
   deps: TurnDeps,
   use: ToolUseBlock,
   stats: TurnStats,
-): Promise<unknown> {
+): Promise<ToolResultBlock> {
   const { registry, io, store } = deps;
   const input = use.input;
   const def = registry.get(use.name);

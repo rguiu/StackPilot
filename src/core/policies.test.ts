@@ -5,6 +5,7 @@ import {
   evictOldResults,
   type SessionState,
 } from "./policies.js";
+import type { ContentBlock } from "../types.js";
 
 function makeState(): SessionState {
   return {
@@ -13,7 +14,7 @@ function makeState(): SessionState {
   };
 }
 
-type Message = { role: "user" | "assistant"; content: unknown };
+type Message = { role: "user" | "assistant"; content: ContentBlock[] };
 
 describe("pageToolResults", () => {
   it("leaves short tool_results unchanged", () => {
