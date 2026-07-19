@@ -37,6 +37,13 @@ export const readTool: ToolDef = {
     try {
       raw = readFileSync(path, "utf8");
     } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EISDIR") {
+        return Promise.resolve({
+          output: `"${path}" is a directory, not a file — use Glob to list its contents`,
+          isError: true,
+        });
+      }
       return Promise.resolve({
         output: (err as Error).message,
         isError: true,
