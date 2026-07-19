@@ -28,7 +28,6 @@ import { formatAge, permissionPromptPlain } from "../tui/render.js";
 import { runHook, logHookResult } from "../core/hooks.js";
 import { openMemoryDb, storeSessionMeta } from "../tools/memory.js";
 import type { SessionState } from "../core/policies.js";
-import type { AgentState } from "../tools/agent.js";
 
 interface CliArgs {
   prompt?: string;
@@ -202,8 +201,6 @@ export async function main(): Promise<void> {
 
   const cwd = process.cwd();
   const interactiveTty = process.stdin.isTTY && process.stdout.isTTY;
-  // -p starts fresh unless -c is given (matches the documented contract; a
-  // bare -p silently resuming the newest session was a P1 bug).
   const store =
     args.continue_ && args.prompt === undefined && interactiveTty
       ? await pickSession(cwd)
@@ -215,13 +212,12 @@ export async function main(): Promise<void> {
     readCache: new Map(),
   };
   const stream = streamWithRetry(config);
-  const agentState: AgentState = {
-    registry: undefined as unknown as ReturnType<typeof createRegistry>,
+  const registry = createRegistry(skills, memoryDb, sessionState, {
     config,
     stream,
-  };
-  const registry = createRegistry(skills, memoryDb, sessionState, agentState);
-  agentState.registry = registry;
+    cwd,
+    maxToolResultChars: appConfig.maxToolResultChars,
+  });
   const skillsAvailable = formatAvailableSkills(skills);
   // Precedence: --tools flag > config [tools].enabled > all enabled.
   const enabledTools = args.tools ?? appConfig.enabledTools;
@@ -288,6 +284,7 @@ export async function main(): Promise<void> {
     const io = makeIO(null, args.yolo, args.json);
     const stats = await runTurn(
       {
+        cwd,
         store,
         registry,
         config,
@@ -308,6 +305,7 @@ export async function main(): Promise<void> {
 
   if (process.stdin.isTTY && process.stdout.isTTY) {
     await runApp({
+      cwd,
       store,
       registry,
       config,
@@ -340,7 +338,7 @@ export async function main(): Promise<void> {
         const { execFileSync } = await import("node:child_process");
         try {
           const output = execFileSync("bash", ["-c", cmd], {
-            cwd: process.cwd(),
+            cwd,
             encoding: "utf8",
             maxBuffer: 1 * 1024 * 1024,
             timeout: 30_000,
@@ -364,6 +362,7 @@ export async function main(): Promise<void> {
     }
     const stats = await runTurn(
       {
+        cwd,
         store,
         registry,
         config,

@@ -57,7 +57,7 @@ export const searchHistoryTool: ToolDef = {
   name: "SearchHistory",
   description:
     "Full-text search over ALL previously recorded agent sessions (prompts, responses, tool calls across projects). Use before solving a problem that may have been tackled before, e.g. 'have we fixed this file/error/topic previously?'.",
-  readOnly: true,
+  runPermitless: true,
   inputSchema: {
     type: "object",
     properties: {

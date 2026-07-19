@@ -21,6 +21,8 @@ import type {
 } from "../transport/anthropic.js";
 import { executeTool, type Registry } from "../tools/index.js";
 import { runHook, type HookConfig } from "./hooks.js";
+import { toolUses, accumulateUsage } from "../util/message.js";
+import type { ToolUseBlock } from "../types.js";
 
 export interface TurnIO {
   onText(delta: string): void;
@@ -35,6 +37,7 @@ export interface TurnIO {
 }
 
 export interface TurnDeps {
+  cwd: string;
   store: SessionStore;
   registry: Registry;
   config: TransportConfig;
@@ -101,22 +104,6 @@ function withReminders(
   return [...blocks, ...results];
 }
 
-interface ToolUseBlock {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-function toolUses(content: unknown[]): ToolUseBlock[] {
-  return content.filter(
-    (b): b is ToolUseBlock =>
-      typeof b === "object" &&
-      b !== null &&
-      (b as { type?: string }).type === "tool_use",
-  );
-}
-
 export async function runTurn(
   deps: TurnDeps,
   userText: string,
@@ -177,7 +164,7 @@ export async function runTurn(
       },
       deps.signal,
     );
-    accumulate(stats, result.usage);
+    accumulateUsage(stats.usage, result.usage);
     stats.lastRequestInputTokens =
       (result.usage.input_tokens ?? 0) +
       (result.usage.cache_read_input_tokens ?? 0) +
@@ -278,7 +265,7 @@ async function dispatchTool(
   } else if (!registry.isEnabled(use.name)) {
     output = `tool disabled for this session: ${use.name}`;
     isError = true;
-  } else if (!def.readOnly) {
+  } else if (!def.runPermitless) {
     const perm = await io.permit(use.name, input);
     if (!perm.allowed) {
       output = perm.reason
@@ -290,7 +277,7 @@ async function dispatchTool(
 
   if (!isError && def) {
     const sessionId = store.sessionId;
-    const cwd = process.cwd();
+    const cwd = deps.cwd;
     const preResult = await runHook(
       "pre_tool",
       deps.hooks?.preTool,
@@ -306,7 +293,7 @@ async function dispatchTool(
     }
 
     io.onToolStart(use.name, input);
-    const result = await executeTool(def, input, process.cwd());
+    const result = await executeTool(def, input, deps.cwd);
     output = result.output;
     isError = result.isError === true;
     io.onToolEnd(use.name, output, isError);
@@ -332,12 +319,4 @@ async function dispatchTool(
     content: output,
     ...(isError ? { is_error: true } : {}),
   };
-}
-
-function accumulate(stats: TurnStats, usage: UsageInfo): void {
-  stats.usage.input_tokens += usage.input_tokens ?? 0;
-  stats.usage.output_tokens += usage.output_tokens ?? 0;
-  stats.usage.cache_read_input_tokens += usage.cache_read_input_tokens ?? 0;
-  stats.usage.cache_creation_input_tokens +=
-    usage.cache_creation_input_tokens ?? 0;
 }

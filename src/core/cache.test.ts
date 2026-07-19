@@ -173,6 +173,7 @@ describe("two-turn byte-stable prefix invariant (through runTurn)", () => {
       permit: () => Promise.resolve({ allowed: true }),
     };
     const deps: TurnDeps = {
+      cwd: "/fake/cwd",
       store,
       registry: createRegistry(),
       config: { baseUrl: "http://x", apiKey: "k", model: "m", maxTokens: 10 },

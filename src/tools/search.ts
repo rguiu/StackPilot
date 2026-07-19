@@ -19,7 +19,7 @@ export const grepTool: ToolDef = {
   description:
     "Search file contents with a regex (ripgrep). Supports context lines, " +
     "case-insensitive mode, output modes, and file-type filtering.",
-  readOnly: true,
+  runPermitless: true,
   inputSchema: {
     type: "object",
     properties: {
@@ -153,7 +153,7 @@ function walk(dir: string, out: string[], depth: number): void {
 export const globTool: ToolDef = {
   name: "Glob",
   description: 'Find files by glob pattern, e.g. "src/**/*.ts".',
-  readOnly: true,
+  runPermitless: true,
   inputSchema: {
     type: "object",
     properties: {

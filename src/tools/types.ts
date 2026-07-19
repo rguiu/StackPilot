@@ -10,8 +10,7 @@ export interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  // true → runs without a permission prompt (read-only tools)
-  readOnly: boolean;
+  runPermitless: boolean;
   execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult>;
 }
 

@@ -16,7 +16,7 @@ export const bashTool: ToolDef = {
   name: "Bash",
   description:
     "Run a shell command in the working directory. Returns combined stdout/stderr.",
-  readOnly: false,
+  runPermitless: false,
   inputSchema: {
     type: "object",
     properties: {

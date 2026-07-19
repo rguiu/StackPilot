@@ -16,7 +16,7 @@
 //      the cached conversation; the server prefix-matches against recent
 //      breakpoints, so appending is a hit and mutating history is a miss.
 
-import { createHash } from "node:crypto";
+import { sha256 } from "../util/hash.js";
 import type { MessagesRequest, UsageInfo } from "../transport/anthropic.js";
 
 type Message = { role: "user" | "assistant"; content: unknown };
@@ -126,9 +126,7 @@ export interface PrefixFingerprint {
 }
 
 function sha(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(stripCacheControl(value)))
-    .digest("hex");
+  return sha256(stripCacheControl(value));
 }
 
 export function prefixFingerprint(req: MessagesRequest): PrefixFingerprint {

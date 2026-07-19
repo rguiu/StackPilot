@@ -193,7 +193,7 @@ function jitter(ms: number): number {
   return ms * (0.5 + Math.random() * 0.5);
 }
 
-function isRetryable(err: unknown): boolean {
+export function isRetryable(err: unknown): boolean {
   if (err instanceof ApiError) {
     return err.status === 429 || err.status >= 500;
   }

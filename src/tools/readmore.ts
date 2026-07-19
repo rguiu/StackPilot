@@ -10,7 +10,7 @@ export function createReadMoreTool(state: SessionState): ToolDef {
     description:
       "Expand a previously truncated tool result. Use the tool_use_id " +
       "from the truncated block's metadata to retrieve the full output.",
-    readOnly: true,
+    runPermitless: true,
     inputSchema: {
       type: "object",
       properties: {

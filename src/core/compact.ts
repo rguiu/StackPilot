@@ -10,6 +10,7 @@
 import { reduce, toApiMessages } from "./reducer.js";
 import { applyCacheControl, type CacheLedger } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
+import { textOf } from "../util/message.js";
 import type { ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
@@ -79,18 +80,6 @@ export interface CompactResult {
   summaryChars: number;
   usage: UsageInfo;
   costUsd: number | null;
-}
-
-function textOf(content: unknown[]): string {
-  return content
-    .map((b) =>
-      typeof b === "object" &&
-      b !== null &&
-      (b as { type?: string }).type === "text"
-        ? ((b as { text?: string }).text ?? "")
-        : "",
-    )
-    .join("");
 }
 
 // Returns null when there is nothing to compact. Throws on an unusable

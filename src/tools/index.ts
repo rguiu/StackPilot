@@ -12,6 +12,11 @@ import { createSearchMemoryTool, createSearchFilesTool } from "./memory.js";
 import { createReadMoreTool } from "./readmore.js";
 import { createAgentTool, type AgentState } from "./agent.js";
 import type { SessionState } from "../core/policies.js";
+import type {
+  TransportConfig,
+  StreamResult,
+  MessagesRequest,
+} from "../transport/anthropic.js";
 import { ToolInputError, type ToolDef, type ToolResult } from "./types.js";
 
 export interface Registry {
@@ -19,14 +24,11 @@ export interface Registry {
   todoState: { todos: TodoItem[] };
   schemas(): { name: string; description: string; input_schema: unknown }[];
   get(name: string): ToolDef | undefined;
-  // Schema presence control (cache-prefix relevant). null = all enabled.
-  // Filtering NEVER reorders: identical subsets → identical prefix bytes.
   setEnabled(names: readonly string[] | null): void;
   isEnabled(name: string): boolean;
   enabledNames(): string[];
 }
 
-// Names in `names` that don't exist in the registry (for fail-fast callers).
 export function unknownToolNames(
   registry: Registry,
   names: readonly string[],
@@ -35,14 +37,25 @@ export function unknownToolNames(
   return names.filter((n) => !valid.has(n));
 }
 
+type StreamFn = (
+  cfg: TransportConfig,
+  req: MessagesRequest,
+  onText: (d: string) => void,
+  signal?: AbortSignal,
+) => Promise<StreamResult>;
+
 export function createRegistry(
   skills?: Map<string, SkillInfo>,
   memoryDb?: import("better-sqlite3").Database,
   sessionState?: SessionState,
-  agentState?: AgentState,
+  agentCfg?: {
+    config: TransportConfig;
+    stream: StreamFn;
+    cwd?: string;
+    maxToolResultChars?: number;
+  },
 ): Registry {
   const todoState = { todos: [] as TodoItem[] };
-  // Order is part of the cache prefix — append new tools at the END only.
   const defs: ToolDef[] = [
     readTool,
     writeTool,
@@ -64,12 +77,11 @@ export function createRegistry(
   if (sessionState) {
     defs.push(createReadMoreTool(sessionState));
   }
-  if (agentState) {
-    defs.push(createAgentTool(agentState));
-  }
+
   const byName = new Map(defs.map((d) => [d.name, d]));
   let enabled: ReadonlySet<string> | null = null;
-  return {
+
+  const registry: Registry = {
     defs,
     todoState,
     schemas() {
@@ -96,6 +108,22 @@ export function createRegistry(
         .map((d) => d.name);
     },
   };
+
+  if (agentCfg) {
+    const agentState: AgentState = {
+      registry,
+      config: agentCfg.config,
+      stream: agentCfg.stream,
+      cwd: agentCfg.cwd,
+      sessionState,
+      maxToolResultChars: agentCfg.maxToolResultChars,
+    };
+    const agentTool = createAgentTool(agentState);
+    defs.push(agentTool);
+    byName.set("Agent", agentTool);
+  }
+
+  return registry;
 }
 
 export async function executeTool(
@@ -109,6 +137,6 @@ export async function executeTool(
     if (err instanceof ToolInputError) {
       return { output: `invalid input: ${err.message}`, isError: true };
     }
-    throw err; // unexpected — let it surface, don't swallow
+    throw err;
   }
 }

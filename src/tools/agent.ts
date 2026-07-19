@@ -4,6 +4,7 @@
 import { runSubagent } from "../core/subagent.js";
 import type { Registry } from "./index.js";
 import type { TransportConfig } from "../transport/anthropic.js";
+import type { SessionState } from "../core/policies.js";
 import { type ToolDef, type ToolResult } from "./types.js";
 
 export interface AgentState {
@@ -25,6 +26,9 @@ export interface AgentState {
     model: string | null;
   }>;
   signal?: AbortSignal;
+  cwd?: string;
+  sessionState?: SessionState;
+  maxToolResultChars?: number;
 }
 
 export function createAgentTool(state: AgentState): ToolDef {
@@ -35,7 +39,7 @@ export function createAgentTool(state: AgentState): ToolDef {
       "Use for codebase exploration, research that requires multiple queries, " +
       "or tasks that would bloat the main conversation. The subagent returns " +
       "a single text result.",
-    readOnly: false,
+    runPermitless: false,
     inputSchema: {
       type: "object",
       properties: {
@@ -83,6 +87,10 @@ export function createAgentTool(state: AgentState): ToolDef {
         },
         state.stream,
         state.signal,
+        undefined,
+        state.cwd,
+        state.sessionState,
+        state.maxToolResultChars,
       );
 
       const usage =
