@@ -81,7 +81,7 @@ export async function streamMessage(
   onText: (delta: string) => void,
   signal?: AbortSignal,
 ): Promise<StreamResult> {
-  const res = await fetch(`${cfg.baseUrl}/v1/messages`, {
+  const res = await fetch(`${cfg.baseUrl}/v1/messages?beta=true`, {
     method: "POST",
     signal,
     headers: {

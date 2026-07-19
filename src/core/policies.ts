@@ -5,7 +5,7 @@
 // across turns (critical for Anthropic prompt caching).
 
 import { sha256Truncated } from "../util/hash.js";
-import type { ToolResultBlock, ToolUseBlock, ContentBlock } from "../types.js";
+import type { ToolResultBlock, ContentBlock } from "../types.js";
 
 export interface SessionState {
   readonly pagedOutputs: Map<string, string>;
@@ -18,9 +18,6 @@ const DEFAULT_MAX_TOOL_RESULT_CHARS = 10_000;
 
 const isToolResult = (block: ContentBlock): block is ToolResultBlock =>
   block.type === "tool_result";
-
-const isToolUse = (block: ContentBlock): block is ToolUseBlock =>
-  block.type === "tool_use";
 
 // --- Tool-result paging ----------------------------------------------------
 
@@ -66,52 +63,6 @@ export function deduplicateReadResult(
   }
   state.readCache.set(filePath, { hash, content: result });
   return result;
-}
-
-// Deprecated post-hoc scanner — kept for subagent.ts which operates on
-// ephemeral messages (no event tree, no cache concerns). Returns a new
-// array; does not mutate input.
-export function deduplicateReads(
-  messages: Message[],
-  state: SessionState,
-): Message[] {
-  const assistantBlocks: Map<string, { input: Record<string, unknown> }> =
-    new Map();
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    for (const block of msg.content) {
-      if (!isToolUse(block)) continue;
-      if (block.name === "Read" && block.id) {
-        assistantBlocks.set(block.id, { input: block.input });
-      }
-    }
-  }
-
-  return messages.map((msg) => {
-    if (msg.role !== "user") return msg;
-    const content = msg.content.map((block) => {
-      if (!isToolResult(block)) return block;
-      if (!block.tool_use_id) return block;
-      const toolUse = assistantBlocks.get(block.tool_use_id);
-      if (!toolUse) return block;
-      const filePath = toolUse.input.file_path as string;
-      if (!filePath) return block;
-      if (typeof block.content !== "string") return block;
-
-      const hash = sha256Truncated(block.content);
-      const cached = state.readCache.get(filePath);
-      if (cached && cached.hash === hash) {
-        return {
-          ...block,
-          content: `[unchanged from previous read — ${block.content.length} chars]`,
-        };
-      }
-      state.readCache.set(filePath, { hash, content: block.content });
-      return block;
-    });
-    if (content === msg.content) return msg;
-    return { role: msg.role, content };
-  });
 }
 
 // --- Stack eviction (subagents only) ---------------------------------------
