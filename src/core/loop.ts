@@ -93,6 +93,10 @@ export interface TurnStats {
   hookReminders: string[];
 }
 
+function deepCloneContent(content: ContentBlock[]): ContentBlock[] {
+  return JSON.parse(JSON.stringify(content)) as ContentBlock[];
+}
+
 const MAX_ITERATIONS = 40;
 
 function withReminders(
@@ -142,7 +146,7 @@ export async function runTurn(
     const reduced = reduce(store.all());
     const apiMessages = reduced.messages.map((m) => ({
       role: m.role,
-      content: m.content,
+      content: deepCloneContent(m.content),
     }));
 
     if (deps.sessionState) {
