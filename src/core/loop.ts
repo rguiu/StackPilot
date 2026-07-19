@@ -8,8 +8,7 @@ import { applyCacheControl, type CacheLedger } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
 import {
   pageToolResults,
-  deduplicateReads,
-  evictOldResults,
+  deduplicateReadResult,
   type SessionState,
 } from "./policies.js";
 import type { ModelPricing } from "../config.js";
@@ -93,10 +92,6 @@ export interface TurnStats {
   hookReminders: string[];
 }
 
-function deepCloneContent(content: ContentBlock[]): ContentBlock[] {
-  return JSON.parse(JSON.stringify(content)) as ContentBlock[];
-}
-
 const MAX_ITERATIONS = 40;
 
 function withReminders(
@@ -144,21 +139,19 @@ export async function runTurn(
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const reduced = reduce(store.all());
-    const apiMessages = reduced.messages.map((m) => ({
+    let apiMessages = reduced.messages.map((m) => ({
       role: m.role,
-      content: deepCloneContent(m.content),
+      content: m.content,
     }));
 
     if (deps.sessionState) {
       if (deps.maxToolResultChars && deps.maxToolResultChars > 0) {
-        pageToolResults(
+        apiMessages = pageToolResults(
           apiMessages,
           deps.sessionState,
           deps.maxToolResultChars,
         );
       }
-      deduplicateReads(apiMessages, deps.sessionState);
-      evictOldResults(apiMessages);
     }
 
     const request = applyCacheControl(system, registry.schemas(), apiMessages);
@@ -308,6 +301,14 @@ async function dispatchTool(
     const result = await executeTool(def, input, deps.cwd);
     output = result.output;
     isError = result.isError === true;
+
+    if (use.name === "Read" && !isError && deps.sessionState) {
+      const filePath = input.file_path as string;
+      if (filePath && typeof output === "string") {
+        output = deduplicateReadResult(filePath, output, deps.sessionState);
+      }
+    }
+
     io.onToolEnd(use.name, output, isError);
 
     const postResult = await runHook(
