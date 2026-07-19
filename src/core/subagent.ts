@@ -3,7 +3,7 @@
 // turns — not stored in the session tree.
 
 import { toolUses, accumulateUsage, textOf } from "../util/message.js";
-import type { ContentBlock } from "../types.js";
+import type { ContentBlock, ToolResultBlock } from "../types.js";
 import type { Registry } from "../tools/index.js";
 import { executeTool } from "../tools/index.js";
 import type {
@@ -131,12 +131,7 @@ export async function runSubagent(
     const uses = toolUses(result.content);
     if (result.stopReason !== "tool_use" || uses.length === 0) break;
 
-    const results: {
-      tool_use_id: string;
-      type: string;
-      content: string;
-      is_error?: boolean;
-    }[] = [];
+    const results: ToolResultBlock[] = [];
     for (const use of uses) {
       toolCalls++;
       const def = registry.get(use.name);
@@ -176,7 +171,7 @@ export async function runSubagent(
 
     messages.push({
       role: "user",
-      content: results as unknown as ContentBlock[],
+      content: results,
     });
   }
 
