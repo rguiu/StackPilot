@@ -241,14 +241,16 @@ export async function main(): Promise<void> {
   const ledger = new CacheLedger();
   const hooks = appConfig.hooks;
 
-  const sessionStartResult = await runHook(
+  const sessionStartResults = await runHook(
     "session_start",
     hooks.sessionStart,
     store.sessionId,
     cwd,
   );
-  if (sessionStartResult) {
-    logHookResult("session_start", sessionStartResult, console.error);
+  if (sessionStartResults) {
+    for (const r of sessionStartResults) {
+      logHookResult("session_start", r, console.error);
+    }
   }
 
   // session_end fires on normal exit paths (awaited) and SIGINT/SIGTERM.
@@ -256,13 +258,15 @@ export async function main(): Promise<void> {
   async function fireSessionEnd(): Promise<void> {
     if (sessionEndFired) return;
     sessionEndFired = true;
-    const result = await runHook(
+    const results = await runHook(
       "session_end",
       hooks.sessionEnd,
       store.sessionId,
       cwd,
     );
-    if (result) logHookResult("session_end", result, console.error);
+    if (results) {
+      for (const r of results) logHookResult("session_end", r, console.error);
+    }
     try {
       storeSessionMeta(memoryDb, store.path, cwd);
     } catch {

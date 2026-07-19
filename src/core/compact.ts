@@ -10,6 +10,7 @@
 import { reduce, toApiMessages } from "./reducer.js";
 import { applyCacheControl } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
+import { runHook, type HookConfig } from "./hooks.js";
 import { textOf } from "../util/message.js";
 import type { ContentBlock } from "../types.js";
 import type { ModelPricing } from "../config.js";
@@ -67,6 +68,10 @@ export interface CompactDeps {
   system: string;
   pricing?: Record<string, ModelPricing>;
   signal?: AbortSignal;
+  hooks?: {
+    preCompact?: HookConfig;
+    postCompact?: HookConfig;
+  };
   stream(
     cfg: TransportConfig,
     req: MessagesRequest,
@@ -93,6 +98,13 @@ export async function runCompact(
     : config;
   const reduced = reduce(store.all());
   if (reduced.messages.length === 0) return null;
+
+  await runHook(
+    "pre_compact",
+    deps.hooks?.preCompact,
+    store.sessionId,
+    process.cwd(),
+  );
 
   const request = buildCompactRequest(
     system,
@@ -123,6 +135,13 @@ export async function runCompact(
       usage: result.usage,
     },
   });
+
+  await runHook(
+    "post_compact",
+    deps.hooks?.postCompact,
+    store.sessionId,
+    process.cwd(),
+  );
 
   const rates = deps.pricing ? resolveRates(result.model, deps.pricing) : null;
   return {

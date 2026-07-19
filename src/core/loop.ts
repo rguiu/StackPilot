@@ -283,7 +283,7 @@ async function dispatchTool(
   if (!isError && def) {
     const sessionId = store.sessionId;
     const cwd = deps.cwd;
-    const preResult = await runHook(
+    const preResults = await runHook(
       "pre_tool",
       deps.hooks?.preTool,
       sessionId,
@@ -291,10 +291,14 @@ async function dispatchTool(
       use.name,
       input,
     );
-    if (preResult && preResult.stdout) {
-      stats.hookReminders.push(
-        `<system-reminder>\n${preResult.stdout}\n</system-reminder>`,
-      );
+    if (preResults) {
+      for (const r of preResults) {
+        if (r.stdout) {
+          stats.hookReminders.push(
+            `<system-reminder>\n${r.stdout}\n</system-reminder>`,
+          );
+        }
+      }
     }
 
     io.onToolStart(use.name, input);
@@ -311,7 +315,7 @@ async function dispatchTool(
 
     io.onToolEnd(use.name, output, isError);
 
-    const postResult = await runHook(
+    const postResults = await runHook(
       "post_tool",
       deps.hooks?.postTool,
       sessionId,
@@ -319,10 +323,14 @@ async function dispatchTool(
       use.name,
       input,
     );
-    if (postResult && postResult.stdout) {
-      stats.hookReminders.push(
-        `<system-reminder>\n${postResult.stdout}\n</system-reminder>`,
-      );
+    if (postResults) {
+      for (const r of postResults) {
+        if (r.stdout) {
+          stats.hookReminders.push(
+            `<system-reminder>\n${r.stdout}\n</system-reminder>`,
+          );
+        }
+      }
     }
   }
 

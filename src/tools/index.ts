@@ -6,6 +6,7 @@ import { patchTool } from "./patch.js";
 import { bashTool } from "./shell.js";
 import { globTool, grepTool } from "./search.js";
 import { searchHistoryTool } from "./history.js";
+import { webFetchTool } from "./webfetch.js";
 import { createTodoTool, type TodoItem } from "./todo.js";
 import { createSkillTool, type SkillInfo } from "./skill.js";
 import { createSearchMemoryTool, createSearchFilesTool } from "./memory.js";
@@ -64,6 +65,7 @@ export function createRegistry(
     bashTool,
     grepTool,
     globTool,
+    webFetchTool,
     createTodoTool(todoState),
     searchHistoryTool,
   ];
