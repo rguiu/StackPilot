@@ -13,7 +13,7 @@ import type {
 } from "../transport/anthropic.js";
 import {
   pageToolResults,
-  deduplicateReads,
+  deduplicateReadResult,
   evictOldResults,
   type SessionState,
 } from "./policies.js";
@@ -105,12 +105,12 @@ export async function runSubagent(
   let abort: string | null = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    let view = messages;
     if (sessionState) {
       if (maxToolResultChars && maxToolResultChars > 0) {
-        pageToolResults(messages, sessionState, maxToolResultChars);
+        view = pageToolResults(view, sessionState, maxToolResultChars);
       }
-      deduplicateReads(messages, sessionState);
-      evictOldResults(messages);
+      view = evictOldResults(view);
     }
 
     const result = await stream(
@@ -118,7 +118,7 @@ export async function runSubagent(
       {
         system: [{ type: "text", text: system }],
         tools,
-        messages,
+        messages: view,
       },
       onText ?? (() => {}),
       signal,
@@ -159,10 +159,17 @@ export async function runSubagent(
         continue;
       }
       const toolResult = await executeTool(def, use.input, cwd);
+      let output = toolResult.output;
+      if (use.name === "Read" && !toolResult.isError && sessionState) {
+        const filePath = use.input.file_path as string;
+        if (filePath && typeof output === "string") {
+          output = deduplicateReadResult(filePath, output, sessionState);
+        }
+      }
       results.push({
         tool_use_id: use.id,
         type: "tool_result",
-        content: toolResult.output,
+        content: output,
         ...(toolResult.isError === true ? { is_error: true } : {}),
       });
     }

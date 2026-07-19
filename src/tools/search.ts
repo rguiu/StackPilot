@@ -152,13 +152,30 @@ function walk(dir: string, out: string[], depth: number): void {
 
 export const globTool: ToolDef = {
   name: "Glob",
-  description: 'Find files by glob pattern, e.g. "src/**/*.ts".',
+  description:
+    "Fast file discovery by glob pattern. Recursively walks directories to " +
+    "locate files — replaces 'find' and 'ls' for any file-name search. " +
+    'Use patterns like "**/*.ts" (all TypeScript), "docs/**/*.md" (markdown ' +
+    'in docs), or "*.json" (top-level only). Returns sorted relative paths. ' +
+    "Skip dirs: .git, node_modules, dist.",
   runPermitless: true,
   inputSchema: {
     type: "object",
     properties: {
-      pattern: { type: "string" },
-      path: { type: "string", description: "Base directory (default cwd)" },
+      pattern: {
+        type: "string",
+        description:
+          'Glob pattern for file names. "**/*.ext" finds all files with ' +
+          'that extension recursively. "src/**/*.ts" limits to a subdirectory.',
+      },
+      path: {
+        type: "string",
+        description: "Base directory to search (default: current working dir)",
+      },
+      head_limit: {
+        type: "number",
+        description: "Max results to return (default 200)",
+      },
     },
     required: ["pattern"],
   },
@@ -166,6 +183,7 @@ export const globTool: ToolDef = {
     const pattern = requireString(input, "pattern");
     const baseInput = optionalString(input, "path") ?? ".";
     const base = isAbsolute(baseInput) ? baseInput : resolve(cwd, baseInput);
+    const limit = typeof input.head_limit === "number" ? input.head_limit : 200;
     const files: string[] = [];
     walk(base, files, 0);
     const re = globToRegExp(pattern);
@@ -173,7 +191,7 @@ export const globTool: ToolDef = {
       .map((f) => relative(base, f))
       .filter((f) => re.test(f))
       .sort()
-      .slice(0, 200);
+      .slice(0, Math.min(limit, 5000));
     return Promise.resolve({
       output: matches.length > 0 ? matches.join("\n") : "no files match",
     });
