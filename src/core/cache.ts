@@ -86,10 +86,12 @@ function findDynamicSplit(system: string): number {
 function markLastBlock(message: Message): Message {
   const { content } = message;
   if (Array.isArray(content) && content.length > 0) {
-    const blocks = content.slice(0, -1) as Record<string, unknown>[];
-    const last = content[content.length - 1] as Record<string, unknown>;
-    blocks.push({ ...last, cache_control: EPHEMERAL });
-    return { role: message.role, content: blocks as unknown as ContentBlock[] };
+    const blocks = content.slice(0, -1);
+    const last = content[content.length - 1];
+    if (last) {
+      blocks.push({ ...last, cache_control: EPHEMERAL });
+    }
+    return { role: message.role, content: blocks };
   }
   return message;
 }

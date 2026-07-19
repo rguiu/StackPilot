@@ -12,6 +12,7 @@ export type ToolUseBlock = {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  cache_control?: { type: "ephemeral" };
 };
 
 export type ToolResultBlock = {
@@ -19,6 +20,7 @@ export type ToolResultBlock = {
   tool_use_id: string;
   content: string;
   is_error?: boolean;
+  cache_control?: { type: "ephemeral" };
 };
 
 export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
