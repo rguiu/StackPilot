@@ -38,6 +38,8 @@ export interface AppConfig {
     postTool?: HookConfig;
     sessionStart?: HookConfig;
     sessionEnd?: HookConfig;
+    preCompact?: HookConfig;
+    postCompact?: HookConfig;
   };
   maxToolResultChars: number;
 }
@@ -184,6 +186,8 @@ function parseHooks(
   postTool?: HookConfig;
   sessionStart?: HookConfig;
   sessionEnd?: HookConfig;
+  preCompact?: HookConfig;
+  postCompact?: HookConfig;
 } {
   if (raw === undefined) return {};
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -195,21 +199,35 @@ function parseHooks(
     postTool?: HookConfig;
     sessionStart?: HookConfig;
     sessionEnd?: HookConfig;
+    preCompact?: HookConfig;
+    postCompact?: HookConfig;
   } = {};
 
   function parseOne(
     key: string,
-    target: "preTool" | "postTool" | "sessionStart" | "sessionEnd",
+    target:
+      | "preTool"
+      | "postTool"
+      | "sessionStart"
+      | "sessionEnd"
+      | "preCompact"
+      | "postCompact",
   ): void {
     const section = h[key] as Record<string, unknown> | undefined;
     if (section === undefined) return;
-    if (typeof section.command !== "string" || section.command.length === 0) {
+    const command = section.command;
+    if (
+      typeof command !== "string" &&
+      (!Array.isArray(command) ||
+        command.length === 0 ||
+        command.some((c) => typeof c !== "string"))
+    ) {
       throw new ConfigError(
-        `[hooks.${key}].command must be a non-empty string`,
+        `[hooks.${key}].command must be a non-empty string or array of strings`,
       );
     }
     out[target] = {
-      command: section.command,
+      command: command as string | string[],
       timeoutMs:
         section.timeoutMs !== undefined
           ? asFiniteNumber(section.timeoutMs, `[hooks.${key}].timeoutMs`)
@@ -221,6 +239,8 @@ function parseHooks(
   parseOne("post_tool", "postTool");
   parseOne("session_start", "sessionStart");
   parseOne("session_end", "sessionEnd");
+  parseOne("pre_compact", "preCompact");
+  parseOne("post_compact", "postCompact");
 
   return out;
 }

@@ -1,10 +1,15 @@
 import { execFile } from "node:child_process";
 
 export type HookPoint =
-  "pre_tool" | "post_tool" | "session_start" | "session_end";
+  | "pre_tool"
+  | "post_tool"
+  | "session_start"
+  | "session_end"
+  | "pre_compact"
+  | "post_compact";
 
 export interface HookConfig {
-  command: string;
+  command: string | string[];
   timeoutMs: number;
 }
 
@@ -26,6 +31,55 @@ export interface HookResult {
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+function commands(config: HookConfig): string[] {
+  return Array.isArray(config.command) ? config.command : [config.command];
+}
+
+async function runOne(
+  command: string,
+  ctx: HookContext,
+  cwd: string,
+  timeoutMs: number,
+): Promise<HookResult> {
+  const env = {
+    ...process.env,
+    STACKPILOT_HOOK: ctx.hook,
+    ...(ctx.tool ? { STACKPILOT_TOOL: ctx.tool } : {}),
+  };
+
+  return new Promise<HookResult>((resolve) => {
+    const child = execFile(
+      command,
+      [],
+      {
+        cwd,
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,
+        env,
+        shell: true,
+      },
+      (err, stdout, stderr) => {
+        resolve({
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          exitCode: err
+            ? typeof (err as { code?: unknown }).code === "number"
+              ? (err as { code: number }).code
+              : 1
+            : 0,
+          timedOut:
+            err != null && (err as { killed?: boolean }).killed === true,
+        });
+      },
+    );
+
+    if (child.stdin) {
+      child.stdin.write(JSON.stringify(ctx));
+      child.stdin.end();
+    }
+  });
+}
+
 export async function runHook(
   hook: HookPoint,
   config: HookConfig | undefined,
@@ -33,8 +87,10 @@ export async function runHook(
   cwd: string,
   tool?: string,
   input?: Record<string, unknown>,
-): Promise<HookResult | null> {
-  if (!config || !config.command) return null;
+): Promise<HookResult[] | null> {
+  if (!config) return null;
+  const cmds = commands(config);
+  if (cmds.length === 0) return null;
 
   const ctx: HookContext = {
     hook,
@@ -45,39 +101,13 @@ export async function runHook(
   if (tool !== undefined) ctx.tool = tool;
   if (input !== undefined) ctx.input = input;
 
-  const stdin = JSON.stringify(ctx);
   const timeoutMs = config.timeoutMs || DEFAULT_TIMEOUT_MS;
-  const env = {
-    ...process.env,
-    STACKPILOT_HOOK: hook,
-    ...(tool ? { STACKPILOT_TOOL: tool } : {}),
-  };
 
-  return new Promise<HookResult>((resolve) => {
-    const child = execFile(
-      config.command,
-      [],
-      {
-        cwd,
-        timeout: timeoutMs,
-        maxBuffer: 1024 * 1024,
-        env,
-      },
-      (err, stdout, stderr) => {
-        resolve({
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-          exitCode: err ? (typeof err.code === "number" ? err.code : 1) : 0,
-          timedOut: err?.killed ?? false,
-        });
-      },
-    );
-
-    if (child.stdin) {
-      child.stdin.write(stdin);
-      child.stdin.end();
-    }
-  });
+  const results: HookResult[] = [];
+  for (const cmd of cmds) {
+    results.push(await runOne(cmd, ctx, cwd, timeoutMs));
+  }
+  return results;
 }
 
 export function logHookResult(

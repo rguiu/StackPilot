@@ -42,6 +42,8 @@ export interface AppDeps {
     postTool?: HookConfig;
     sessionStart?: HookConfig;
     sessionEnd?: HookConfig;
+    preCompact?: HookConfig;
+    postCompact?: HookConfig;
   };
   sessionState?: SessionState;
   maxToolResultChars?: number;
@@ -215,6 +217,12 @@ export async function runApp(deps: AppDeps): Promise<void> {
         pricing,
         signal: interrupt.signal,
         stream,
+        hooks: deps.hooks
+          ? {
+              preCompact: deps.hooks.preCompact,
+              postCompact: deps.hooks.postCompact,
+            }
+          : undefined,
       });
       stopSpinner();
       if (!res) {
