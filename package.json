@@ -4,12 +4,16 @@
   "type": "module",
   "description": "A lean, cost-optimal coding agent with a fully controllable message stack. An independent client matching Claude Code's behavioral core, rebuilt smaller.",
   "license": "MIT",
-  "private": true,
   "author": "Raul Guiu",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rguiu/stackpilot.git"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "claude-code",
     "coding-agent",

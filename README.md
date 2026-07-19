@@ -29,7 +29,11 @@ expose. See [docs/PLAN.md](docs/PLAN.md) for the roadmap and
 [OPTIMIZATION_IDEAS.md](docs/OPTIMIZATION_IDEAS.md) for what's next.
 
 ```bash
-npx tsx src/cli/main.ts
+# Install globally from local checkout
+npm install -g .
+
+# Or link for development (symlinks to working copy)
+npm link
 ```
 
 ## Quick start
@@ -39,19 +43,19 @@ npx tsx src/cli/main.ts
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Interactive REPL
-npx tsx src/cli/main.ts
+stackpilot
 
 # One-shot (headless)
-npx tsx src/cli/main.ts -p "What does src/core/loop.ts do?"
+stackpilot -p "What does src/core/loop.ts do?"
 
 # Resume last session
-npx tsx src/cli/main.ts -c
+stackpilot -c
 
 # Skip permission prompts
-npx tsx src/cli/main.ts --yolo
+stackpilot --yolo
 
 # JSON output (for scripting)
-npx tsx src/cli/main.ts -p "explain cache.ts" --json
+stackpilot -p "explain cache.ts" --json
 ```
 
 ## Features
