@@ -3,7 +3,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { absPath } from "../util/path.js";
+import { resolveToolPath } from "../util/path.js";
 import {
   requireString,
   truncate,
@@ -30,7 +30,7 @@ export const readTool: ToolDef = {
     required: ["file_path"],
   },
   execute(input, cwd): Promise<ToolResult> {
-    const path = absPath(cwd, requireString(input, "file_path"));
+    const path = resolveToolPath(cwd, requireString(input, "file_path"));
     if (input.offset !== undefined) {
       if (typeof input.offset !== "number" || input.offset < 1) {
         return Promise.resolve({
@@ -93,7 +93,7 @@ export const writeTool: ToolDef = {
     required: ["file_path", "content"],
   },
   execute(input, cwd): Promise<ToolResult> {
-    const path = absPath(cwd, requireString(input, "file_path"));
+    const path = resolveToolPath(cwd, requireString(input, "file_path"));
     const content = input.content;
     if (typeof content !== "string") {
       return Promise.resolve({
@@ -125,7 +125,7 @@ export const editTool: ToolDef = {
     required: ["file_path", "old_string", "new_string"],
   },
   execute(input, cwd): Promise<ToolResult> {
-    const path = absPath(cwd, requireString(input, "file_path"));
+    const path = resolveToolPath(cwd, requireString(input, "file_path"));
     const oldString = requireString(input, "old_string");
     const newString =
       typeof input.new_string === "string" ? input.new_string : "";

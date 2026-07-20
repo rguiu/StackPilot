@@ -234,7 +234,7 @@ the box as work lands — this is the source of truth for "what's left," so keep
 it current rather than starting a fresh list.
 
 **Legend:** `[x]` done · `[ ]` pending · `[~]` in progress · `[>]` delayed /
-deferred · `[-]` won't do (reason given). Test count so far: 176 → 226 (+50).
+deferred · `[-]` won't do (reason given). Test count so far: 176 → 239 (+63).
 (A `vitest.config.ts` was also added to scope test discovery to `src/`, so a
 prior `npm run build` no longer makes vitest double-run compiled `dist/` copies.)
 
@@ -283,9 +283,12 @@ prior `npm run build` no longer makes vitest double-run compiled `dist/` copies.
 - [x] **WebFetch SSRF** (`webfetch.ts`) — block loopback/link-local/RFC1918,
       resolve DNS to catch inward-pointing names, follow redirects manually to
       re-validate each hop. _New `webfetch.test.ts`._ `fix/ownership-hardening`
-- [ ] **No path containment** (`util/path.ts`, fs/patch tools) — opt-in
-      workspace-root confinement so Read/Write/Edit/Patch can't escape the
-      project. Read is permitless, so this is the notable gap.
+- [x] **No path containment** (`util/path.ts`, fs/patch/search tools) —
+      added opt-in `confineToWorkspace` config: when on, file tools
+      (Read/Write/Edit/Patch/Grep/Glob) refuse any path outside the workspace
+      root (git root, else cwd), blocking absolute-path reads and `../`
+      escapes. Off by default. _New `path.test.ts` + fs integration tests._
+      `fix/ownership-hardening`
 - [ ] **Consider gating WebFetch behind the permission prompt** rather than
       leaving it `runPermitless` (defense-in-depth beyond the SSRF guard).
 - [>] **Bash has no sandbox** (`shell.ts`) — deferred; it's a Bash tool by

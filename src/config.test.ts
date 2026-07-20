@@ -28,6 +28,17 @@ describe("loadAppConfig", () => {
     expect(cfg.pricing).toEqual({});
     expect(cfg.enabledTools).toBeNull();
     expect(cfg.autoCompactAtTokens).toBe(DEFAULT_AUTO_COMPACT_AT_TOKENS);
+    expect(cfg.confineToWorkspace).toBe(false);
+  });
+
+  it("parses confineToWorkspace and rejects non-booleans", () => {
+    writeFileSync(join(dir, "confine.toml"), "confineToWorkspace = true\n");
+    expect(loadAppConfig(env("confine.toml")).confineToWorkspace).toBe(true);
+
+    writeFileSync(join(dir, "bad.toml"), 'confineToWorkspace = "yes"\n');
+    expect(() => loadAppConfig(env("bad.toml"))).toThrow(
+      /confineToWorkspace must be a boolean/,
+    );
   });
 
   it("parses pricing, tools, and threshold", () => {

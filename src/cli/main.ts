@@ -28,6 +28,7 @@ import { formatAge, permissionPromptPlain } from "../tui/render.js";
 import { runHook, logHookResult } from "../core/hooks.js";
 import { openMemoryDb, storeSessionMeta } from "../tools/memory.js";
 import type { SessionState } from "../core/policies.js";
+import { setWorkspaceRoot } from "../util/path.js";
 
 interface CliArgs {
   prompt?: string;
@@ -200,6 +201,11 @@ export async function main(): Promise<void> {
   const pricing = appConfig.pricing;
 
   const cwd = process.cwd();
+  // Opt-in workspace confinement: file tools refuse paths outside the git
+  // root (else cwd) when enabled in config. No-op when off.
+  if (appConfig.confineToWorkspace) {
+    setWorkspaceRoot(findGitRoot(cwd) ?? cwd);
+  }
   const interactiveTty = process.stdin.isTTY && process.stdout.isTTY;
   const store =
     args.continue_ && args.prompt === undefined && interactiveTty

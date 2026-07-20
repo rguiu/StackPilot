@@ -2,7 +2,7 @@
 // changes — fewer tokens than quoting unchanged surrounding lines.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { absPath } from "../util/path.js";
+import { resolveToolPath } from "../util/path.js";
 import { requireString, type ToolDef, type ToolResult } from "./types.js";
 
 interface Hunk {
@@ -150,7 +150,7 @@ export const patchTool: ToolDef = {
     required: ["file_path", "patch"],
   },
   execute(input, cwd): Promise<ToolResult> {
-    const path = absPath(cwd, requireString(input, "file_path"));
+    const path = resolveToolPath(cwd, requireString(input, "file_path"));
     const patch = requireString(input, "patch");
 
     let original: string;
