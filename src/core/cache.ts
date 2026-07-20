@@ -60,9 +60,22 @@ export function applyCacheControl(
     systemBlocks.push({ type: "text", text: system, cache_control: EPHEMERAL });
   }
 
-  const marked = messages.map((m, i) =>
-    i === messages.length - 1 ? markLastBlock(m) : m,
-  );
+  // The moving breakpoint goes on the last message that actually has content.
+  // Marking the literal last message would silently drop the breakpoint when
+  // that message is empty (e.g. a trailing user turn with no blocks yet),
+  // costing a full cache re-read on the next turn.
+  let markIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const c = messages[i]?.content;
+    if (Array.isArray(c) && c.length > 0) {
+      markIdx = i;
+      break;
+    }
+  }
+  const marked =
+    markIdx === -1
+      ? messages
+      : messages.map((m, i) => (i === markIdx ? markLastBlock(m) : m));
 
   return { system: systemBlocks, tools, messages: marked };
 }

@@ -23,7 +23,28 @@ export type ToolResultBlock = {
   cache_control?: { type: "ephemeral" };
 };
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+// Extended-thinking blocks. Must be preserved verbatim (including signature)
+// when echoing an assistant turn back to the API — the server validates the
+// signature, so flattening these to text breaks subsequent requests.
+export type ThinkingBlock = {
+  type: "thinking";
+  thinking: string;
+  signature?: string;
+  cache_control?: { type: "ephemeral" };
+};
+
+export type RedactedThinkingBlock = {
+  type: "redacted_thinking";
+  data: string;
+  cache_control?: { type: "ephemeral" };
+};
+
+export type ContentBlock =
+  | TextBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | ThinkingBlock
+  | RedactedThinkingBlock;
 
 export type Message = {
   role: "user" | "assistant";

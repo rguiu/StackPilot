@@ -3,10 +3,25 @@
 // Extraction runs on session end; search tools expose the index.
 
 import Database from "better-sqlite3";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ToolDef, type ToolResult } from "./types.js";
 import { firstTextBlock } from "../util/message.js";
+
+// Best-effort current git branch for a directory. Empty string when the dir
+// isn't a git repo or git isn't available — never throws.
+function gitBranch(cwd: string): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -61,7 +76,10 @@ interface SessionMeta {
   costUsd: number;
 }
 
-function extractMeta(jsonlPath: string): SessionMeta | null {
+function extractMeta(
+  jsonlPath: string,
+  sessionCwd: string,
+): SessionMeta | null {
   let raw: string;
   try {
     raw = readFileSync(jsonlPath, "utf8");
@@ -75,8 +93,8 @@ function extractMeta(jsonlPath: string): SessionMeta | null {
 
   const id = jsonlPath.split("/").pop()?.replace(".jsonl", "") ?? "unknown";
   let timestamp = "";
-  const cwd = "";
-  const branch = "";
+  const cwd = sessionCwd;
+  const branch = gitBranch(sessionCwd);
   let firstPrompt = "";
   const filesSeen = new Set<string>();
   const errors: string[] = [];
@@ -202,7 +220,7 @@ export function storeSessionMeta(
   jsonlPath: string,
   cwd: string,
 ): void {
-  const meta = extractMeta(jsonlPath);
+  const meta = extractMeta(jsonlPath, cwd);
   if (!meta) return;
 
   const stmt = db.prepare(

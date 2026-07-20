@@ -15,6 +15,12 @@ autoCompactAtTokens = 160000
 # ReadMore tool to expand). 0 disables paging.
 # maxToolResultChars = 10000
 
+# Confine file tools (Read/Write/Edit/Patch/Grep/Glob) to the workspace root
+# (the git root, else the cwd). When true, any path outside that root — an
+# absolute path like /etc/passwd or a ../ escape — is refused. Off by default
+# so out-of-repo reads keep working; turn on for untrusted or autonomous runs.
+# confineToWorkspace = false
+
 # Retry behaviour for transient failures (5xx, 429, network errors).
 # Exponential backoff with jitter. Set maxRetries = 0 to disable.
 # [retry]

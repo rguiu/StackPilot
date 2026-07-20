@@ -2,7 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
 import {
   optionalString,
   requireString,
@@ -10,6 +10,7 @@ import {
   type ToolDef,
   type ToolResult,
 } from "./types.js";
+import { resolveToolPath } from "../util/path.js";
 
 const MAX_OUTPUT = 30_000;
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", ".stackpilot"]);
@@ -55,6 +56,14 @@ export const grepTool: ToolDef = {
   execute(input, cwd): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const path = optionalString(input, "path") ?? ".";
+    try {
+      resolveToolPath(cwd, path);
+    } catch (err) {
+      return Promise.resolve({
+        output: err instanceof Error ? err.message : String(err),
+        isError: true,
+      });
+    }
     const glob = optionalString(input, "glob");
     const caseInsensitive = input.i === true;
     const after = typeof input.A === "number" ? input.A : undefined;
@@ -182,7 +191,15 @@ export const globTool: ToolDef = {
   execute(input, cwd): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const baseInput = optionalString(input, "path") ?? ".";
-    const base = isAbsolute(baseInput) ? baseInput : resolve(cwd, baseInput);
+    let base: string;
+    try {
+      base = resolveToolPath(cwd, baseInput);
+    } catch (err) {
+      return Promise.resolve({
+        output: err instanceof Error ? err.message : String(err),
+        isError: true,
+      });
+    }
     const limit = typeof input.head_limit === "number" ? input.head_limit : 200;
     const files: string[] = [];
     walk(base, files, 0);

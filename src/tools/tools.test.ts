@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { editTool, readTool } from "./fs.js";
 import { globToRegExp } from "./search.js";
-import { createRegistry, unknownToolNames } from "./index.js";
+import { createRegistry, executeTool, unknownToolNames } from "./index.js";
+import { ToolInputError, type ToolDef } from "./types.js";
 
 const dir = mkdtempSync(join(tmpdir(), "sp-tools-"));
 afterAll(() => {
@@ -28,6 +29,22 @@ describe("Read", () => {
   it("errors on a missing file", async () => {
     const res = await readTool.execute({ file_path: join(dir, "nope") }, dir);
     expect(res.isError).toBe(true);
+  });
+
+  it("rejects offset < 1 (would slice(-1) and return wrong lines)", async () => {
+    const f = join(dir, "off.txt");
+    writeFileSync(f, "a\nb\nc\n");
+    const res = await readTool.execute({ file_path: f, offset: 0 }, dir);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("offset");
+  });
+
+  it("rejects a non-positive limit", async () => {
+    const f = join(dir, "lim.txt");
+    writeFileSync(f, "a\nb\nc\n");
+    const res = await readTool.execute({ file_path: f, limit: -5 }, dir);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("limit");
   });
 });
 
@@ -74,6 +91,41 @@ describe("Edit", () => {
     );
     expect(res.isError).toBeUndefined();
     expect(readFileSync(f, "utf8")).toBe("y y y");
+  });
+});
+
+describe("executeTool error containment", () => {
+  const makeTool = (fn: () => Promise<never>): ToolDef => ({
+    name: "Boom",
+    description: "",
+    inputSchema: { type: "object" },
+    runPermitless: true,
+    execute: fn,
+  });
+
+  it("turns a raw thrown Error into an error result instead of propagating", async () => {
+    const tool = makeTool(() => Promise.reject(new Error("EACCES: denied")));
+    const res = await executeTool(tool, {}, dir);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("EACCES: denied");
+    expect(res.output).toContain("Boom");
+  });
+
+  it("still labels ToolInputError as invalid input", async () => {
+    const tool = makeTool(() => Promise.reject(new ToolInputError("bad arg")));
+    const res = await executeTool(tool, {}, dir);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("invalid input");
+  });
+
+  it("handles non-Error throws", async () => {
+    const tool = makeTool(() => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw "string failure";
+    });
+    const res = await executeTool(tool, {}, dir);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("string failure");
   });
 });
 

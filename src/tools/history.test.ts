@@ -5,13 +5,23 @@ import { aapOrigin, formatHits, searchHistoryTool } from "./history.js";
 let server: Server;
 let origin: string;
 let lastUrl: string | null = null;
-let failMode: "none" | "http500" = "none";
+let failMode: "none" | "http500" | "notjson" | "notarray" = "none";
 
 beforeAll(async () => {
   server = createServer((req, res) => {
     lastUrl = req.url ?? null;
     if (failMode === "http500") {
       res.writeHead(500).end("boom");
+      return;
+    }
+    if (failMode === "notjson") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("this is not json");
+      return;
+    }
+    if (failMode === "notarray") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "unexpected object" }));
       return;
     }
     res.writeHead(200, { "content-type": "application/json" });
@@ -91,6 +101,22 @@ describe("SearchHistory", () => {
     process.env.STACKPILOT_AAP_ORIGIN = origin;
     expect(res.isError).toBe(true);
     expect(res.output).toContain("not reachable");
+  });
+
+  it("degrades on a non-JSON body without throwing", async () => {
+    failMode = "notjson";
+    const res = await searchHistoryTool.execute({ query: "x" }, "/cwd");
+    failMode = "none";
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("unreadable");
+  });
+
+  it("degrades on a non-array JSON body without throwing", async () => {
+    failMode = "notarray";
+    const res = await searchHistoryTool.execute({ query: "x" }, "/cwd");
+    failMode = "none";
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("unexpected shape");
   });
 });
 

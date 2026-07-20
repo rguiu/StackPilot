@@ -28,6 +28,14 @@ interface SearchHit {
   client: string | null;
 }
 
+// Validate one entry from the aap /search response. Guards formatHits against
+// a malformed or version-skewed payload (it calls .slice on sessionId/snippet).
+function isSearchHit(value: unknown): value is SearchHit {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.sessionId === "string" && typeof v.snippet === "string";
+}
+
 export function aapOrigin(env: NodeJS.ProcessEnv): string {
   if (env.STACKPILOT_AAP_ORIGIN) return env.STACKPILOT_AAP_ORIGIN;
   if (env.ANTHROPIC_BASE_URL) {
@@ -91,7 +99,22 @@ export const searchHistoryTool: ToolDef = {
         isError: true,
       };
     }
-    const hits = (await res.json()) as SearchHit[];
+    let parsed: unknown;
+    try {
+      parsed = await res.json();
+    } catch {
+      return {
+        output: `engineering memory returned an unreadable response (not JSON) from ${origin}`,
+        isError: true,
+      };
+    }
+    if (!Array.isArray(parsed)) {
+      return {
+        output: `engineering memory returned an unexpected shape (expected an array) from ${origin}`,
+        isError: true,
+      };
+    }
+    const hits = parsed.filter(isSearchHit);
     return { output: truncate(formatHits(hits), MAX_OUTPUT) };
   },
 };

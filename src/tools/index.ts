@@ -138,6 +138,13 @@ export async function executeTool(
     if (err instanceof ToolInputError) {
       return { output: `invalid input: ${err.message}`, isError: true };
     }
-    throw err;
+    // Any other exception (EACCES/ENOSPC from a write, a malformed upstream
+    // response, an unexpected throw in tool code) becomes a clean error
+    // result. Letting it escape here would abort the whole turn — and the
+    // tool_use block would be left without its required tool_result sibling.
+    return {
+      output: `tool "${def.name}" failed: ${err instanceof Error ? err.message : String(err)}`,
+      isError: true,
+    };
   }
 }

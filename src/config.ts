@@ -42,6 +42,10 @@ export interface AppConfig {
     postCompact?: HookConfig;
   };
   maxToolResultChars: number;
+  // When true, file tools (Read/Write/Edit/Patch/Grep/Glob) refuse paths
+  // outside the workspace root (git root, else cwd). Off by default to keep
+  // out-of-repo reads working; opt in for untrusted/autonomous runs.
+  confineToWorkspace: boolean;
 }
 
 export function configPath(
@@ -280,6 +284,12 @@ export function loadAppConfig(
       ? DEFAULT_MAX_TOOL_RESULT_CHARS
       : asFiniteNumber(maxRaw, "maxToolResultChars");
 
+  const confineRaw = file.confineToWorkspace;
+  if (confineRaw !== undefined && typeof confineRaw !== "boolean") {
+    throw new ConfigError("confineToWorkspace must be a boolean");
+  }
+  const confineToWorkspace = confineRaw === true;
+
   return {
     transport,
     pricing: parsePricing(file.pricing, path),
@@ -287,6 +297,7 @@ export function loadAppConfig(
     autoCompactAtTokens,
     hooks: parseHooks(file.hooks, path),
     maxToolResultChars,
+    confineToWorkspace,
   };
 }
 

@@ -2,7 +2,7 @@
 // changes — fewer tokens than quoting unchanged surrounding lines.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { absPath } from "../util/path.js";
+import { resolveToolPath } from "../util/path.js";
 import { requireString, type ToolDef, type ToolResult } from "./types.js";
 
 interface Hunk {
@@ -48,14 +48,18 @@ function applyPatch(src: string[], patch: string): string {
       continue;
     }
 
-    if (currentHunk && (line.startsWith(" ") || line === "")) {
-      currentHunk.lines.push(line);
-    } else if (currentHunk && line.startsWith("+")) {
-      currentHunk.lines.push(line);
-    } else if (currentHunk && line.startsWith("-")) {
+    if (
+      currentHunk &&
+      (line.startsWith(" ") || line.startsWith("+") || line.startsWith("-"))
+    ) {
       currentHunk.lines.push(line);
     }
-    // Skip \ No newline lines — they're informational only
+    // Bare empty lines ("") and "\ No newline" lines are NOT hunk body:
+    // unified-diff context lines always carry a leading space, so a truly
+    // empty line is either a trailing-newline artifact of split("\n") or a
+    // separator. Collecting it would mis-consume a source line and corrupt
+    // the file. If a real blank context line was emitted without its leading
+    // space, the srcLen cross-check below fails loudly instead.
   }
 
   if (hunks.length === 0) throw new PatchError("no hunks in patch");
@@ -66,42 +70,54 @@ function applyPatch(src: string[], patch: string): string {
     const hunk = hunks[h];
     if (!hunk) continue;
     const srcIdx = hunk.srcStart - 1; // 0-indexed
-    const endIdx = srcIdx + hunk.srcLen;
 
-    // Verify context matches before applying.
-    const contextLines: string[] = [];
+    if (srcIdx < 0 || srcIdx > out.length) {
+      throw new PatchError(
+        `hunk starts at line ${hunk.srcStart}, out of range (file has ${out.length} lines)`,
+      );
+    }
+
+    // Verify context matches before applying. Every context (" ") and
+    // deletion ("-") line MUST match the source at srcPos — including past
+    // EOF, where "no such line" is itself a mismatch (previously skipped,
+    // which silently accepted bogus hunks).
     const resultLines: string[] = [];
     let srcPos = srcIdx;
 
     for (const line of hunk.lines) {
-      if (line.startsWith(" ")) {
-        const plain = line.slice(1);
-        if (srcPos < out.length && out[srcPos] !== plain) {
-          throw new PatchError(
-            `hunk failed at line ${srcPos + 1}: expected "${out[srcPos] ?? "(EOF)"}", got "${plain}"`,
-          );
-        }
-        contextLines.push(plain);
-        resultLines.push(plain);
-        srcPos++;
-      } else if (line.startsWith("-")) {
-        const plain = line.slice(1);
-        if (srcPos < out.length && out[srcPos] !== plain) {
-          throw new PatchError(
-            `hunk failed at line ${srcPos + 1}: expected "${out[srcPos] ?? "(EOF)"}", got "-${plain}"`,
-          );
-        }
-        srcPos++;
-      } else if (line.startsWith("+")) {
+      if (line.startsWith("+")) {
         resultLines.push(line.slice(1));
-      } else if (line === "") {
-        // Empty context line — treated as space-prefixed
-        resultLines.push("");
-        srcPos++;
+        continue;
       }
+      // Context (" ") or deletion ("-"): both consume a source line.
+      const plain = line.slice(1);
+      if (srcPos >= out.length) {
+        throw new PatchError(
+          `hunk failed at line ${srcPos + 1}: expected "${plain}", but file ended`,
+        );
+      }
+      if (out[srcPos] !== plain) {
+        const kind = line.startsWith("-") ? "-" : " ";
+        throw new PatchError(
+          `hunk failed at line ${srcPos + 1}: expected "${out[srcPos]}", got "${kind}${plain}"`,
+        );
+      }
+      if (line.startsWith(" ")) resultLines.push(plain);
+      srcPos++;
     }
 
-    out.splice(srcIdx, endIdx - srcIdx, ...resultLines);
+    // Cross-check the parsed body against the header count: srcPos must have
+    // advanced by exactly srcLen. A mismatch means a malformed/hand-edited
+    // diff — splice by the header would remove the wrong number of lines and
+    // corrupt the file, so refuse instead.
+    const consumed = srcPos - srcIdx;
+    if (consumed !== hunk.srcLen) {
+      throw new PatchError(
+        `hunk header claims ${hunk.srcLen} source line(s) but body consumes ${consumed}`,
+      );
+    }
+
+    out.splice(srcIdx, hunk.srcLen, ...resultLines);
   }
 
   return out.join("\n");
@@ -134,7 +150,7 @@ export const patchTool: ToolDef = {
     required: ["file_path", "patch"],
   },
   execute(input, cwd): Promise<ToolResult> {
-    const path = absPath(cwd, requireString(input, "file_path"));
+    const path = resolveToolPath(cwd, requireString(input, "file_path"));
     const patch = requireString(input, "patch");
 
     let original: string;
