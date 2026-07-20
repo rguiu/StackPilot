@@ -234,7 +234,8 @@ the box as work lands — this is the source of truth for "what's left," so keep
 it current rather than starting a fresh list.
 
 **Legend:** `[x]` done · `[ ]` pending · `[~]` in progress · `[>]` delayed /
-deferred · `[-]` won't do (reason given). Test count so far: 176 → 239 (+63).
+deferred · `[-]` won't do (reason given). Test count so far: 176 → 295 (+119)
+across the hardening, Bedrock, and TUI/polish branches.
 (A `vitest.config.ts` was also added to scope test discovery to `src/`, so a
 prior `npm run build` no longer makes vitest double-run compiled `dist/` copies.)
 
@@ -297,19 +298,40 @@ prior `npm run build` no longer makes vitest double-run compiled `dist/` copies.
 
 ### Semantic footguns
 
-- [ ] **`TodoWrite` flagged `readOnly` while mutating** — rename to
-      `bypassPermission`.
-- [ ] **`AgentState` circular reference is init-order-dependent**
-      (`agent.ts`) — make the registry wiring explicit.
-- [ ] **No graceful TUI shutdown on SIGINT mid-turn** (`tui/app.ts`) —
-      readline may be left in raw mode.
+- [x] **Tool permission flag** — resolved: the flag is `runPermitless` (means
+      "bypass the prompt"), not a misleading `readOnly`. Fixed the stale
+      `/config` hint ("read-only"/"mutating" → "no prompt"/"asks permission").
+      `feat/tui-and-polish`
+- [x] **`AgentState` circular reference** — resolved: `createAgentTool` takes a
+      lazy `getRegistry()` closure over the `const registry`, not a post-hoc
+      assignment. No init-order fragility.
+- [x] **No graceful TUI shutdown on SIGINT mid-turn** (`cli/main.ts`) — the
+      signal handler now restores the terminal (raw mode off, cursor shown)
+      before exit. `feat/tui-and-polish`
+
+### TUI
+
+- [x] **Streaming markdown was dead code** (`tui/app.ts` / `markdown.ts`) —
+      `onText` now feeds `MarkdownRenderer.push()`; headings/bold/lists/fenced
+      code render during streaming. _New `markdown.test.ts` (9)._
+      `feat/tui-and-polish`
+- [x] **Divergent render paths** — `app.ts` + headless `main.ts` now route tool
+      display through `render.ts` `toolStartLine`/`toolEndLine` (clean
+      `⏺ Bash(npm test)` not raw JSON); removed the dead `banner()`.
+      `feat/tui-and-polish`
+- [x] **Misleading Edit/Patch diff branch** (`render.ts`) — those tools return
+      status strings, not diffs; show a success line like Write. Removed unused
+      `renderDiff`/`diffLine`; README "diff colorization" claim dropped.
+      `feat/tui-and-polish`
 
 ### Test coverage & cleanup
 
-- [ ] **Test the remaining pure modules** — `policies.ts`, `prompt.ts`,
-      `instructions.ts`, `hooks.ts`, `subagent.ts`, `markdown.ts`.
-- [ ] **De-duplicate shared helpers** — `toolUses`, usage `accumulate`,
-      `absPath`, `sha`, the `!`-shell handler.
+- [x] **Test the remaining pure modules** — `policies.ts`/`prompt.ts` covered
+      during hardening; `instructions.ts` (7) + `hooks.ts` (10) +
+      `markdown.ts` (9) added on `feat/tui-and-polish`.
+- [x] **De-duplicate shared helpers** — `toolUses`/`accumulateUsage` unified
+      into `util/message.ts` (imported by loop.ts + subagent.ts); `absPath` in
+      `util/path.ts`; transport helpers centralized in `stream.ts`.
 - [ ] **Thread `cwd` through `TurnDeps`** instead of `process.cwd()` in loop
       and subagent (portability/testability).
 - [ ] **Give the subagent the same context policies** (and consider its own
@@ -320,5 +342,6 @@ prior `npm run build` no longer makes vitest double-run compiled `dist/` copies.
 - [ ] **Minimal/lazy tool loading** — marquee cache win in
       `docs/OPTIMIZATION_IDEAS.md` (~30% cache-write savings).
 - [ ] **Publish A/B harness results** (policy on/off via `aap compare`).
-- [>] **Widen `transport/` to a provider interface** — deferred; only if
-  multi-provider becomes a goal (currently a stated non-goal for v1).
+- [x] **Widen `transport/` to a provider interface** — done: the streaming core
+      lives in `stream.ts`, `streamWithRetry` routes by provider, and
+      **Amazon Bedrock** shipped as a second provider (event-stream + SigV4).
