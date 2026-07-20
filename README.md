@@ -56,7 +56,56 @@ stackpilot --yolo
 
 # JSON output (for scripting)
 stackpilot -p "explain cache.ts" --json
+
+# Print version + build commit (handy for spotting a stale global link)
+stackpilot --version
 ```
+
+> The `stackpilot` bin runs the compiled `dist/`, so `npm link` rebuilds
+> automatically (via the `prepare` script). For fast iteration without a
+> rebuild, run `npm run dev -- -p "…"` (executes `src/` through tsx).
+> `stackpilot --version` prints the git commit the running binary was built
+> from — if it doesn't match your checkout's HEAD, re-run `npm run build`.
+
+### Amazon Bedrock
+
+StackPilot speaks the Bedrock wire protocol (AWS binary event-stream) in
+addition to the Anthropic Messages API. Enable it with the same switch Claude
+Code uses:
+
+```bash
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=eu-west-1
+# Model aliases resolve to Bedrock inference-profile ids:
+export ANTHROPIC_MODEL=opus            # or sonnet / haiku
+export ANTHROPIC_DEFAULT_OPUS_MODEL=eu.anthropic.claude-opus-4-8
+
+stackpilot -p "hi"
+```
+
+**Config discovery.** StackPilot reads the `env` block of
+`~/.claude/settings.json` (where Claude Code stores `CLAUDE_CODE_USE_BEDROCK`,
+`AWS_REGION`, and the `ANTHROPIC_DEFAULT_*_MODEL` ids) and merges it under your
+real shell env. So if Claude Code already works on Bedrock, StackPilot does too
+with no extra exports — even from a plain shell that never sourced those vars.
+Any variable you export explicitly overrides the stored value.
+
+Auth resolves in this order:
+
+- **Signing proxy / gateway** — set `ANTHROPIC_BEDROCK_BASE_URL` to a local
+  proxy that performs SigV4; no AWS credentials needed in the client. (This is
+  what `aap run` provides.)
+- **Direct to AWS** — leave the base URL unset (defaults to
+  `bedrock-runtime.<region>.amazonaws.com`) and provide static credentials
+  (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / optional
+  `AWS_SESSION_TOKEN`). Signing is done in-process (no `@aws-sdk` dependency).
+  **Using an SSO profile** (`AWS_PROFILE`)? Export session credentials into the
+  shell first — the in-process signer reads env vars, not the profile:
+
+  ```bash
+  eval "$(aws configure export-credentials --profile "$AWS_PROFILE" --format env)"
+  stackpilot -p "hi"
+  ```
 
 ## Features
 

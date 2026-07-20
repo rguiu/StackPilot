@@ -8,9 +8,11 @@
 //   stackpilot --model <id>    override model
 
 import { createInterface, type Interface } from "node:readline/promises";
-import { realpathSync } from "node:fs";
+import { realpathSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import process from "node:process";
 import { isCancel, select } from "@clack/prompts";
 import { loadAppConfig, ConfigError } from "../config.js";
@@ -37,10 +39,16 @@ interface CliArgs {
   model?: string;
   tools?: string[];
   json: boolean;
+  version: boolean;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { continue_: false, yolo: false, json: false };
+  const args: CliArgs = {
+    continue_: false,
+    yolo: false,
+    json: false,
+    version: false,
+  };
   const rest = [...argv];
   while (rest.length > 0) {
     const a = rest.shift() as string;
@@ -60,12 +68,43 @@ export function parseArgs(argv: string[]): CliArgs {
         .filter((s) => s.length > 0);
     } else if (a === "--json") {
       args.json = true;
+    } else if (a === "-v" || a === "--version") {
+      args.version = true;
     } else {
       console.error(`unknown argument: ${a}`);
       process.exit(2);
     }
   }
   return args;
+}
+
+// Version string: package version + best-effort git commit of the checkout the
+// running dist/ was built from. The build root is two levels up from
+// dist/cli/main.js. Surfaces stale-binary situations (the SHA won't match HEAD
+// of a checkout you rebuilt but didn't relink).
+export function versionString(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // dist/cli
+  const root = join(here, "..", ".."); // package root
+  let version = "0.0.0";
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(root, "package.json"), "utf8"),
+    ) as { version?: string };
+    if (pkg.version) version = pkg.version;
+  } catch {
+    // fall through with default
+  }
+  let commit = "";
+  try {
+    commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // not a git checkout (published install) — version alone
+  }
+  return commit ? `stackpilot ${version} (${commit})` : `stackpilot ${version}`;
 }
 
 function openStore(cwd: string, continue_: boolean): SessionStore {
@@ -187,6 +226,10 @@ function printStats(stats: TurnStats, model: string, json = false): void {
 
 export async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (args.version) {
+    process.stdout.write(versionString() + "\n");
+    return;
+  }
   let appConfig;
   try {
     appConfig = loadAppConfig(process.env, { model: args.model });

@@ -55,40 +55,139 @@ export function configPath(
   return env.STACKPILOT_CONFIG ?? join(home, ".stackpilot", "config.toml");
 }
 
-function claudeSettingsKey(home: string): string | null {
+// Claude Code stores its provider config (API key, Bedrock switch, region,
+// model ids) in the `env` block of ~/.claude/settings.json — NOT as real
+// environment variables. Interactive shells don't read that file, so a user
+// who configured Bedrock only there would otherwise reach us with none of it
+// set (→ default model, 400 from Bedrock). We read the whole block.
+export function claudeSettingsEnv(home: string): Record<string, string> {
   try {
     const raw = readFileSync(join(home, ".claude", "settings.json"), "utf8");
-    const parsed = JSON.parse(raw) as { env?: Record<string, string> };
-    return parsed.env?.ANTHROPIC_API_KEY ?? null;
+    const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed.env ?? {})) {
+      if (typeof v === "string") out[k] = v;
+    }
+    return out;
   } catch {
-    return null;
+    return {};
   }
 }
 
-export function resolveConfig(
+// Effective environment: real process env wins over settings.json (an
+// explicitly exported var always overrides the stored default).
+export function effectiveEnv(
   env: NodeJS.ProcessEnv,
+  home: string,
+): NodeJS.ProcessEnv {
+  return { ...claudeSettingsEnv(home), ...env };
+}
+
+// Bedrock is enabled by CLAUDE_CODE_USE_BEDROCK (the same switch Claude Code
+// uses) being set to a truthy value.
+export function useBedrock(env: NodeJS.ProcessEnv): boolean {
+  const v = env.CLAUDE_CODE_USE_BEDROCK;
+  return (
+    v !== undefined && v !== "" && v !== "0" && v.toLowerCase() !== "false"
+  );
+}
+
+// A Bedrock inference-profile id (or ARN) is passed to /model/<id> verbatim.
+// We recognize them by their region-prefixed "<region>.anthropic.…" shape or
+// an ARN, so a real id is never rewritten.
+function looksLikeBedrockId(model: string): boolean {
+  return (
+    model.startsWith("arn:") ||
+    /^[a-z]{2,4}\.anthropic\./.test(model) ||
+    model.startsWith("anthropic.")
+  );
+}
+
+// Resolve a model name to a Bedrock inference-profile id. Claude Code exports
+// ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL with the full ids. We map by
+// FAMILY — any name mentioning opus/sonnet/haiku (e.g. the bare alias "haiku",
+// "opus", or the default "claude-haiku-4-5") onto the matching env id. This is
+// deliberately loose: a Bedrock endpoint rejects a non-Bedrock id with a 400,
+// so we must not pass an Anthropic-style name like "claude-haiku-4-5" through.
+export function resolveBedrockModel(
+  requested: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  // Already a Bedrock id/ARN — use as-is.
+  if (looksLikeBedrockId(requested)) return requested;
+
+  const name = requested.toLowerCase();
+  const families: [test: string, id: string | undefined][] = [
+    ["opus", env.ANTHROPIC_DEFAULT_OPUS_MODEL],
+    ["sonnet", env.ANTHROPIC_DEFAULT_SONNET_MODEL],
+    ["haiku", env.ANTHROPIC_DEFAULT_HAIKU_MODEL],
+  ];
+  for (const [test, id] of families) {
+    if (name.includes(test) && id) return id;
+  }
+  // No family match and not a Bedrock id: fall back to the configured Haiku id
+  // if we have one (never a bare Anthropic alias, which Bedrock would reject).
+  return env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? requested;
+}
+
+export function resolveConfig(
+  processEnv: NodeJS.ProcessEnv,
   overrides: { model?: string } = {},
   home: string = homedir(),
 ): TransportConfig {
-  const apiKey = env.ANTHROPIC_API_KEY ?? claudeSettingsKey(home);
-  if (!apiKey) {
+  // Merge in the ~/.claude/settings.json env block (Bedrock switch, region,
+  // model ids, API key) so a user who configured Claude Code there — but never
+  // exported those as shell vars — is picked up. Real env vars still win.
+  const env = effectiveEnv(processEnv, home);
+  const bedrock = useBedrock(env);
+
+  // Bedrock auth is handled by AWS (or the signing proxy), so no API key is
+  // required. In direct-Anthropic mode a key is mandatory.
+  const apiKey = env.ANTHROPIC_API_KEY ?? "";
+  if (!bedrock && !apiKey) {
     throw new ConfigError(
       "no API key: set ANTHROPIC_API_KEY or add it to the env block of ~/.claude/settings.json",
     );
   }
+
+  const requestedModel =
+    overrides.model ??
+    env.STACKPILOT_MODEL ??
+    env.ANTHROPIC_MODEL ??
+    DEFAULT_MODEL;
+
+  if (bedrock) {
+    const baseUrl = (
+      env.ANTHROPIC_BEDROCK_BASE_URL ??
+      `https://bedrock-runtime.${env.AWS_REGION ?? env.AWS_DEFAULT_REGION ?? "us-east-1"}.amazonaws.com`
+    ).replace(/\/$/, "");
+    return {
+      baseUrl,
+      apiKey,
+      model: resolveBedrockModel(requestedModel, env),
+      maxTokens: 8192,
+      retry: DEFAULT_RETRY,
+      provider: "bedrock",
+      region: env.AWS_REGION ?? env.AWS_DEFAULT_REGION,
+      cheapModel: env.STACKPILOT_CHEAP_MODEL
+        ? resolveBedrockModel(env.STACKPILOT_CHEAP_MODEL, env)
+        : env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+      thinkingBudgetTokens: env.STACKPILOT_THINKING_BUDGET
+        ? parseInt(env.STACKPILOT_THINKING_BUDGET, 10)
+        : undefined,
+    };
+  }
+
   return {
     baseUrl: (env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(
       /\/$/,
       "",
     ),
     apiKey,
-    model:
-      overrides.model ??
-      env.STACKPILOT_MODEL ??
-      env.ANTHROPIC_MODEL ??
-      DEFAULT_MODEL,
+    model: requestedModel,
     maxTokens: 8192,
     retry: DEFAULT_RETRY,
+    provider: "anthropic",
     cheapModel: env.STACKPILOT_CHEAP_MODEL ?? undefined,
     thinkingBudgetTokens: env.STACKPILOT_THINKING_BUDGET
       ? parseInt(env.STACKPILOT_THINKING_BUDGET, 10)

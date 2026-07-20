@@ -2,11 +2,29 @@
 //
 // Rates are resolved against the SERVER-reported model id (dated snapshot,
 // e.g. claude-haiku-4-5-20251001): exact key first, then the id with its
-// trailing -YYYYMMDD date stripped. Unknown model → null (never guess a
-// price).
+// trailing -YYYYMMDD date stripped, then a Bedrock-id normalization (strip the
+// region prefix / anthropic. namespace / -vN:N + date suffix) so a Bedrock
+// inference-profile id like "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+// reaches the bare "claude-haiku-4-5" pricing key. Unknown model → null
+// (never guess a price).
 
 import type { ModelPricing } from "../config.js";
 import type { UsageInfo } from "../transport/anthropic.js";
+
+// "eu.anthropic.claude-haiku-4-5-20251001-v1:0" → "claude-haiku-4-5"
+// "claude-haiku-4-5-20251001" → "claude-haiku-4-5"
+export function normalizeModelId(model: string): string {
+  let m = model;
+  // Drop a region prefix like "eu." / "us." / "apac."
+  m = m.replace(/^[a-z]{2,4}\./, "");
+  // Drop the "anthropic." provider namespace.
+  m = m.replace(/^anthropic\./, "");
+  // Drop a Bedrock version suffix "-v1:0" / ":0".
+  m = m.replace(/-v\d+:\d+$/, "").replace(/:\d+$/, "");
+  // Drop a trailing -YYYYMMDD date snapshot.
+  m = m.replace(/-\d{8}$/, "");
+  return m;
+}
 
 export function resolveRates(
   model: string | null,
@@ -17,6 +35,8 @@ export function resolveRates(
   if (exact) return exact;
   const undated = model.replace(/-\d{8}$/, "");
   if (undated !== model && pricing[undated]) return pricing[undated];
+  const normalized = normalizeModelId(model);
+  if (normalized !== model && pricing[normalized]) return pricing[normalized];
   return null;
 }
 
