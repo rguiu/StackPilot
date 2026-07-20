@@ -128,21 +128,35 @@ describe("Bedrock config", () => {
     expect(useBedrock({})).toBe(false);
   });
 
-  it("resolveBedrockModel maps aliases to inference-profile ids", () => {
+  it("resolveBedrockModel maps names to inference-profile ids by family", () => {
     const env = {
       ANTHROPIC_DEFAULT_HAIKU_MODEL:
         "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
       ANTHROPIC_DEFAULT_OPUS_MODEL: "eu.anthropic.claude-opus-4-1-v1:0",
     };
+    // Bare aliases.
     expect(resolveBedrockModel("haiku", env)).toBe(
       "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
     );
     expect(resolveBedrockModel("opus", env)).toBe(
       "eu.anthropic.claude-opus-4-1-v1:0",
     );
-    // A full id passes through unchanged.
+    // Anthropic-style names (e.g. the DEFAULT_MODEL fallback) match by family —
+    // this is the aap-run case that produced a 400 before the fix.
+    expect(resolveBedrockModel("claude-haiku-4-5", env)).toBe(
+      "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    );
+    // A real Bedrock id / ARN passes through unchanged.
     expect(resolveBedrockModel("eu.anthropic.claude-x-v1:0", env)).toBe(
       "eu.anthropic.claude-x-v1:0",
+    );
+    expect(
+      resolveBedrockModel("arn:aws:bedrock:eu-west-1::foundation-model/x", env),
+    ).toBe("arn:aws:bedrock:eu-west-1::foundation-model/x");
+    // No family match, no Bedrock id → fall back to the Haiku id, never a
+    // bare Anthropic alias (which Bedrock rejects).
+    expect(resolveBedrockModel("mystery-model", env)).toBe(
+      "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
     );
   });
 

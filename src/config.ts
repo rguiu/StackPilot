@@ -74,23 +74,42 @@ export function useBedrock(env: NodeJS.ProcessEnv): boolean {
   );
 }
 
-// Resolve a model alias to a Bedrock inference-profile id. Claude Code exports
-// ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL with the full ids; we map the
-// short aliases (and ANTHROPIC_MODEL's "opus"/"sonnet"/"haiku") onto them.
+// A Bedrock inference-profile id (or ARN) is passed to /model/<id> verbatim.
+// We recognize them by their region-prefixed "<region>.anthropic.…" shape or
+// an ARN, so a real id is never rewritten.
+function looksLikeBedrockId(model: string): boolean {
+  return (
+    model.startsWith("arn:") ||
+    /^[a-z]{2,4}\.anthropic\./.test(model) ||
+    model.startsWith("anthropic.")
+  );
+}
+
+// Resolve a model name to a Bedrock inference-profile id. Claude Code exports
+// ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL with the full ids. We map by
+// FAMILY — any name mentioning opus/sonnet/haiku (e.g. the bare alias "haiku",
+// "opus", or the default "claude-haiku-4-5") onto the matching env id. This is
+// deliberately loose: a Bedrock endpoint rejects a non-Bedrock id with a 400,
+// so we must not pass an Anthropic-style name like "claude-haiku-4-5" through.
 export function resolveBedrockModel(
   requested: string,
   env: NodeJS.ProcessEnv,
 ): string {
-  const alias = requested.toLowerCase();
-  const byAlias: Record<string, string | undefined> = {
-    opus: env.ANTHROPIC_DEFAULT_OPUS_MODEL,
-    sonnet: env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-    haiku: env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-  };
-  const mapped = byAlias[alias];
-  if (mapped) return mapped;
-  // Already a full id (contains a region/version marker) — use as-is.
-  return requested;
+  // Already a Bedrock id/ARN — use as-is.
+  if (looksLikeBedrockId(requested)) return requested;
+
+  const name = requested.toLowerCase();
+  const families: [test: string, id: string | undefined][] = [
+    ["opus", env.ANTHROPIC_DEFAULT_OPUS_MODEL],
+    ["sonnet", env.ANTHROPIC_DEFAULT_SONNET_MODEL],
+    ["haiku", env.ANTHROPIC_DEFAULT_HAIKU_MODEL],
+  ];
+  for (const [test, id] of families) {
+    if (name.includes(test) && id) return id;
+  }
+  // No family match and not a Bedrock id: fall back to the configured Haiku id
+  // if we have one (never a bare Anthropic alias, which Bedrock would reject).
+  return env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? requested;
 }
 
 export function resolveConfig(
