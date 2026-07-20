@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -160,15 +166,23 @@ describe("Bedrock config", () => {
     );
   });
 
+  // Pass an isolated home (no ~/.claude/settings.json) so these stay hermetic
+  // regardless of the machine's real Claude Code config.
+  const noHome = "/nonexistent-home";
+
   it("resolveConfig uses the Bedrock base URL, no API key required", () => {
-    const cfg = resolveConfig({
-      CLAUDE_CODE_USE_BEDROCK: "1",
-      ANTHROPIC_BEDROCK_BASE_URL: "http://127.0.0.1:8080",
-      AWS_REGION: "eu-west-1",
-      ANTHROPIC_MODEL: "haiku",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL:
-        "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
-    });
+    const cfg = resolveConfig(
+      {
+        CLAUDE_CODE_USE_BEDROCK: "1",
+        ANTHROPIC_BEDROCK_BASE_URL: "http://127.0.0.1:8080",
+        AWS_REGION: "eu-west-1",
+        ANTHROPIC_MODEL: "haiku",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+      },
+      {},
+      noHome,
+    );
     expect(cfg.provider).toBe("bedrock");
     expect(cfg.baseUrl).toBe("http://127.0.0.1:8080");
     expect(cfg.model).toBe("eu.anthropic.claude-haiku-4-5-20251001-v1:0");
@@ -177,22 +191,45 @@ describe("Bedrock config", () => {
   });
 
   it("resolveConfig falls back to the AWS host when no proxy URL is set", () => {
-    const cfg = resolveConfig({
-      CLAUDE_CODE_USE_BEDROCK: "1",
-      AWS_REGION: "us-east-1",
-    });
+    const cfg = resolveConfig(
+      { CLAUDE_CODE_USE_BEDROCK: "1", AWS_REGION: "us-east-1" },
+      {},
+      noHome,
+    );
     expect(cfg.baseUrl).toBe("https://bedrock-runtime.us-east-1.amazonaws.com");
   });
 
   it("still requires an API key in direct-Anthropic mode", () => {
-    expect(() => resolveConfig({}, {}, "/nonexistent-home")).toThrow(
-      ConfigError,
-    );
+    expect(() => resolveConfig({}, {}, noHome)).toThrow(ConfigError);
   });
 
   it("direct-Anthropic mode sets provider anthropic", () => {
-    const cfg = resolveConfig({ ANTHROPIC_API_KEY: "k" });
+    const cfg = resolveConfig({ ANTHROPIC_API_KEY: "k" }, {}, noHome);
     expect(cfg.provider).toBe("anthropic");
     expect(cfg.baseUrl).toBe("https://api.anthropic.com");
+  });
+
+  it("reads the Bedrock env from ~/.claude/settings.json when shell vars are unset", () => {
+    // The exact failure the user hit: interactive shell has none of the
+    // ANTHROPIC_* vars, but settings.json does. Effective env must pick them up.
+    const settingsHome = mkdtempSync(join(tmpdir(), "sp-settings-"));
+    mkdirSync(join(settingsHome, ".claude"), { recursive: true });
+    writeFileSync(
+      join(settingsHome, ".claude", "settings.json"),
+      JSON.stringify({
+        env: {
+          CLAUDE_CODE_USE_BEDROCK: "1",
+          AWS_REGION: "eu-west-1",
+          ANTHROPIC_MODEL: "opus",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "eu.anthropic.claude-opus-4-8",
+        },
+      }),
+    );
+    // Empty process env — everything comes from settings.json.
+    const cfg = resolveConfig({}, {}, settingsHome);
+    expect(cfg.provider).toBe("bedrock");
+    expect(cfg.model).toBe("eu.anthropic.claude-opus-4-8");
+    expect(cfg.region).toBe("eu-west-1");
+    rmSync(settingsHome, { recursive: true, force: true });
   });
 });

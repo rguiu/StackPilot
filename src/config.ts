@@ -55,14 +55,32 @@ export function configPath(
   return env.STACKPILOT_CONFIG ?? join(home, ".stackpilot", "config.toml");
 }
 
-function claudeSettingsKey(home: string): string | null {
+// Claude Code stores its provider config (API key, Bedrock switch, region,
+// model ids) in the `env` block of ~/.claude/settings.json — NOT as real
+// environment variables. Interactive shells don't read that file, so a user
+// who configured Bedrock only there would otherwise reach us with none of it
+// set (→ default model, 400 from Bedrock). We read the whole block.
+export function claudeSettingsEnv(home: string): Record<string, string> {
   try {
     const raw = readFileSync(join(home, ".claude", "settings.json"), "utf8");
-    const parsed = JSON.parse(raw) as { env?: Record<string, string> };
-    return parsed.env?.ANTHROPIC_API_KEY ?? null;
+    const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed.env ?? {})) {
+      if (typeof v === "string") out[k] = v;
+    }
+    return out;
   } catch {
-    return null;
+    return {};
   }
+}
+
+// Effective environment: real process env wins over settings.json (an
+// explicitly exported var always overrides the stored default).
+export function effectiveEnv(
+  env: NodeJS.ProcessEnv,
+  home: string,
+): NodeJS.ProcessEnv {
+  return { ...claudeSettingsEnv(home), ...env };
 }
 
 // Bedrock is enabled by CLAUDE_CODE_USE_BEDROCK (the same switch Claude Code
@@ -113,15 +131,19 @@ export function resolveBedrockModel(
 }
 
 export function resolveConfig(
-  env: NodeJS.ProcessEnv,
+  processEnv: NodeJS.ProcessEnv,
   overrides: { model?: string } = {},
   home: string = homedir(),
 ): TransportConfig {
+  // Merge in the ~/.claude/settings.json env block (Bedrock switch, region,
+  // model ids, API key) so a user who configured Claude Code there — but never
+  // exported those as shell vars — is picked up. Real env vars still win.
+  const env = effectiveEnv(processEnv, home);
   const bedrock = useBedrock(env);
 
   // Bedrock auth is handled by AWS (or the signing proxy), so no API key is
   // required. In direct-Anthropic mode a key is mandatory.
-  const apiKey = env.ANTHROPIC_API_KEY ?? claudeSettingsKey(home) ?? "";
+  const apiKey = env.ANTHROPIC_API_KEY ?? "";
   if (!bedrock && !apiKey) {
     throw new ConfigError(
       "no API key: set ANTHROPIC_API_KEY or add it to the env block of ~/.claude/settings.json",
