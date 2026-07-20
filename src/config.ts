@@ -65,30 +65,88 @@ function claudeSettingsKey(home: string): string | null {
   }
 }
 
+// Bedrock is enabled by CLAUDE_CODE_USE_BEDROCK (the same switch Claude Code
+// uses) being set to a truthy value.
+export function useBedrock(env: NodeJS.ProcessEnv): boolean {
+  const v = env.CLAUDE_CODE_USE_BEDROCK;
+  return (
+    v !== undefined && v !== "" && v !== "0" && v.toLowerCase() !== "false"
+  );
+}
+
+// Resolve a model alias to a Bedrock inference-profile id. Claude Code exports
+// ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL with the full ids; we map the
+// short aliases (and ANTHROPIC_MODEL's "opus"/"sonnet"/"haiku") onto them.
+export function resolveBedrockModel(
+  requested: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  const alias = requested.toLowerCase();
+  const byAlias: Record<string, string | undefined> = {
+    opus: env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    sonnet: env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    haiku: env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+  };
+  const mapped = byAlias[alias];
+  if (mapped) return mapped;
+  // Already a full id (contains a region/version marker) — use as-is.
+  return requested;
+}
+
 export function resolveConfig(
   env: NodeJS.ProcessEnv,
   overrides: { model?: string } = {},
   home: string = homedir(),
 ): TransportConfig {
-  const apiKey = env.ANTHROPIC_API_KEY ?? claudeSettingsKey(home);
-  if (!apiKey) {
+  const bedrock = useBedrock(env);
+
+  // Bedrock auth is handled by AWS (or the signing proxy), so no API key is
+  // required. In direct-Anthropic mode a key is mandatory.
+  const apiKey = env.ANTHROPIC_API_KEY ?? claudeSettingsKey(home) ?? "";
+  if (!bedrock && !apiKey) {
     throw new ConfigError(
       "no API key: set ANTHROPIC_API_KEY or add it to the env block of ~/.claude/settings.json",
     );
   }
+
+  const requestedModel =
+    overrides.model ??
+    env.STACKPILOT_MODEL ??
+    env.ANTHROPIC_MODEL ??
+    DEFAULT_MODEL;
+
+  if (bedrock) {
+    const baseUrl = (
+      env.ANTHROPIC_BEDROCK_BASE_URL ??
+      `https://bedrock-runtime.${env.AWS_REGION ?? env.AWS_DEFAULT_REGION ?? "us-east-1"}.amazonaws.com`
+    ).replace(/\/$/, "");
+    return {
+      baseUrl,
+      apiKey,
+      model: resolveBedrockModel(requestedModel, env),
+      maxTokens: 8192,
+      retry: DEFAULT_RETRY,
+      provider: "bedrock",
+      region: env.AWS_REGION ?? env.AWS_DEFAULT_REGION,
+      cheapModel: env.STACKPILOT_CHEAP_MODEL
+        ? resolveBedrockModel(env.STACKPILOT_CHEAP_MODEL, env)
+        : env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+      thinkingBudgetTokens: env.STACKPILOT_THINKING_BUDGET
+        ? parseInt(env.STACKPILOT_THINKING_BUDGET, 10)
+        : undefined,
+    };
+  }
+
   return {
     baseUrl: (env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(
       /\/$/,
       "",
     ),
     apiKey,
-    model:
-      overrides.model ??
-      env.STACKPILOT_MODEL ??
-      env.ANTHROPIC_MODEL ??
-      DEFAULT_MODEL,
+    model: requestedModel,
     maxTokens: 8192,
     retry: DEFAULT_RETRY,
+    provider: "anthropic",
     cheapModel: env.STACKPILOT_CHEAP_MODEL ?? undefined,
     thinkingBudgetTokens: env.STACKPILOT_THINKING_BUDGET
       ? parseInt(env.STACKPILOT_THINKING_BUDGET, 10)

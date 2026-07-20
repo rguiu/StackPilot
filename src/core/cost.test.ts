@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { computeCostUsd, formatUsd, resolveRates } from "./cost.js";
+import {
+  computeCostUsd,
+  formatUsd,
+  normalizeModelId,
+  resolveRates,
+} from "./cost.js";
 import type { ModelPricing } from "../config.js";
 
 const haiku: ModelPricing = {
@@ -23,6 +28,24 @@ describe("resolveRates", () => {
   it("returns null for unknown models and null input", () => {
     expect(resolveRates("gpt-4o", pricing)).toBeNull();
     expect(resolveRates(null, pricing)).toBeNull();
+  });
+
+  it("normalizes a Bedrock inference-profile id to the bare alias", () => {
+    expect(
+      resolveRates("eu.anthropic.claude-haiku-4-5-20251001-v1:0", pricing),
+    ).toBe(haiku);
+  });
+});
+
+describe("normalizeModelId", () => {
+  it.each([
+    ["eu.anthropic.claude-haiku-4-5-20251001-v1:0", "claude-haiku-4-5"],
+    ["us.anthropic.claude-opus-4-1-v1:0", "claude-opus-4-1"],
+    ["anthropic.claude-sonnet-4-5-v2:0", "claude-sonnet-4-5"],
+    ["claude-haiku-4-5-20251001", "claude-haiku-4-5"],
+    ["claude-haiku-4-5", "claude-haiku-4-5"],
+  ])("%s → %s", (input, expected) => {
+    expect(normalizeModelId(input)).toBe(expected);
   });
 });
 

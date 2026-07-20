@@ -61,6 +61,10 @@ autoCompactAtTokens = 160000
 # (dated snapshot). A date-suffix-stripped fallback is tried, so the bare
 # alias key also works. Same schema as ai-agent-profiler — blocks can be
 # copied between the two configs verbatim.
+#
+# Bedrock inference-profile ids (e.g. "eu.anthropic.claude-haiku-4-5-...-v1:0")
+# are normalized to the bare alias ("claude-haiku-4-5") before lookup, so the
+# alias keys below cover both direct-Anthropic and Bedrock runs.
 [pricing."claude-haiku-4-5-20251001"]
 inputPerMTok = 1.0
 outputPerMTok = 5.0
@@ -72,3 +76,15 @@ inputPerMTok = 1.0
 outputPerMTok = 5.0
 cacheInputPerMTok = 0.10
 cacheWritePerMTok = 1.25
+
+[pricing."claude-sonnet-4-5"]
+inputPerMTok = 3.0
+outputPerMTok = 15.0
+cacheInputPerMTok = 0.30
+cacheWritePerMTok = 3.75
+
+[pricing."claude-opus-4-8"]
+inputPerMTok = 15.0
+outputPerMTok = 75.0
+cacheInputPerMTok = 1.50
+cacheWritePerMTok = 18.75

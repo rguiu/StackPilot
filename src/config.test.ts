@@ -6,7 +6,10 @@ import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   loadAppConfig,
+  resolveBedrockModel,
+  resolveConfig,
   saveConfigPatch,
+  useBedrock,
 } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "sp-config-"));
@@ -112,5 +115,70 @@ describe("saveConfigPatch", () => {
     const path = saveConfigPatch({ enabledTools: [] }, e);
     expect(readFileSync(path, "utf8")).toContain("enabled");
     expect(loadAppConfig(e).enabledTools).toEqual([]);
+  });
+});
+
+describe("Bedrock config", () => {
+  it("useBedrock reads the CLAUDE_CODE_USE_BEDROCK switch", () => {
+    expect(useBedrock({ CLAUDE_CODE_USE_BEDROCK: "1" })).toBe(true);
+    expect(useBedrock({ CLAUDE_CODE_USE_BEDROCK: "true" })).toBe(true);
+    expect(useBedrock({ CLAUDE_CODE_USE_BEDROCK: "0" })).toBe(false);
+    expect(useBedrock({ CLAUDE_CODE_USE_BEDROCK: "false" })).toBe(false);
+    expect(useBedrock({ CLAUDE_CODE_USE_BEDROCK: "" })).toBe(false);
+    expect(useBedrock({})).toBe(false);
+  });
+
+  it("resolveBedrockModel maps aliases to inference-profile ids", () => {
+    const env = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL:
+        "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "eu.anthropic.claude-opus-4-1-v1:0",
+    };
+    expect(resolveBedrockModel("haiku", env)).toBe(
+      "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    );
+    expect(resolveBedrockModel("opus", env)).toBe(
+      "eu.anthropic.claude-opus-4-1-v1:0",
+    );
+    // A full id passes through unchanged.
+    expect(resolveBedrockModel("eu.anthropic.claude-x-v1:0", env)).toBe(
+      "eu.anthropic.claude-x-v1:0",
+    );
+  });
+
+  it("resolveConfig uses the Bedrock base URL, no API key required", () => {
+    const cfg = resolveConfig({
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      ANTHROPIC_BEDROCK_BASE_URL: "http://127.0.0.1:8080",
+      AWS_REGION: "eu-west-1",
+      ANTHROPIC_MODEL: "haiku",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL:
+        "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    });
+    expect(cfg.provider).toBe("bedrock");
+    expect(cfg.baseUrl).toBe("http://127.0.0.1:8080");
+    expect(cfg.model).toBe("eu.anthropic.claude-haiku-4-5-20251001-v1:0");
+    expect(cfg.region).toBe("eu-west-1");
+    expect(cfg.apiKey).toBe("");
+  });
+
+  it("resolveConfig falls back to the AWS host when no proxy URL is set", () => {
+    const cfg = resolveConfig({
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      AWS_REGION: "us-east-1",
+    });
+    expect(cfg.baseUrl).toBe("https://bedrock-runtime.us-east-1.amazonaws.com");
+  });
+
+  it("still requires an API key in direct-Anthropic mode", () => {
+    expect(() => resolveConfig({}, {}, "/nonexistent-home")).toThrow(
+      ConfigError,
+    );
+  });
+
+  it("direct-Anthropic mode sets provider anthropic", () => {
+    const cfg = resolveConfig({ ANTHROPIC_API_KEY: "k" });
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.baseUrl).toBe("https://api.anthropic.com");
   });
 });

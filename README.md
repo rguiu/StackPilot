@@ -58,6 +58,34 @@ stackpilot --yolo
 stackpilot -p "explain cache.ts" --json
 ```
 
+### Amazon Bedrock
+
+StackPilot speaks the Bedrock wire protocol (AWS binary event-stream) in
+addition to the Anthropic Messages API. Enable it with the same switch Claude
+Code uses:
+
+```bash
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=eu-west-1
+# Model aliases resolve to Bedrock inference-profile ids:
+export ANTHROPIC_MODEL=opus            # or sonnet / haiku
+export ANTHROPIC_DEFAULT_OPUS_MODEL=eu.anthropic.claude-opus-4-8-...-v1:0
+# (Claude Code already exports these.)
+
+stackpilot -p "hi"
+```
+
+Auth resolves in this order:
+
+- **Signing proxy / gateway** — set `ANTHROPIC_BEDROCK_BASE_URL` to a local
+  proxy that performs SigV4; no AWS credentials needed in the client.
+- **Direct to AWS** — leave the base URL unset (defaults to
+  `bedrock-runtime.<region>.amazonaws.com`) and export static credentials
+  (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / optional
+  `AWS_SESSION_TOKEN`). For SSO, run
+  `aws configure export-credentials --format env` first. Signing is done
+  in-process (no `@aws-sdk` dependency).
+
 ## Features
 
 ### Core loop
