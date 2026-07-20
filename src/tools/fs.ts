@@ -31,6 +31,22 @@ export const readTool: ToolDef = {
   },
   execute(input, cwd): Promise<ToolResult> {
     const path = absPath(cwd, requireString(input, "file_path"));
+    if (input.offset !== undefined) {
+      if (typeof input.offset !== "number" || input.offset < 1) {
+        return Promise.resolve({
+          output: `"offset" must be a positive integer (1-indexed line)`,
+          isError: true,
+        });
+      }
+    }
+    if (input.limit !== undefined) {
+      if (typeof input.limit !== "number" || input.limit < 1) {
+        return Promise.resolve({
+          output: `"limit" must be a positive integer`,
+          isError: true,
+        });
+      }
+    }
     const offset = typeof input.offset === "number" ? input.offset : 1;
     const limit = typeof input.limit === "number" ? input.limit : MAX_LINES;
     let raw: string;
