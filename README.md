@@ -56,7 +56,16 @@ stackpilot --yolo
 
 # JSON output (for scripting)
 stackpilot -p "explain cache.ts" --json
+
+# Print version + build commit (handy for spotting a stale global link)
+stackpilot --version
 ```
+
+> The `stackpilot` bin runs the compiled `dist/`, so `npm link` rebuilds
+> automatically (via the `prepare` script). For fast iteration without a
+> rebuild, run `npm run dev -- -p "…"` (executes `src/` through tsx).
+> `stackpilot --version` prints the git commit the running binary was built
+> from — if it doesn't match your checkout's HEAD, re-run `npm run build`.
 
 ### Amazon Bedrock
 
