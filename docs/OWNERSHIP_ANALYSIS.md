@@ -234,7 +234,9 @@ the box as work lands — this is the source of truth for "what's left," so keep
 it current rather than starting a fresh list.
 
 **Legend:** `[x]` done · `[ ]` pending · `[~]` in progress · `[>]` delayed /
-deferred · `[-]` won't do (reason given). Test count so far: 176 → 223 (+47).
+deferred · `[-]` won't do (reason given). Test count so far: 176 → 226 (+50).
+(A `vitest.config.ts` was also added to scope test discovery to `src/`, so a
+prior `npm run build` no longer makes vitest double-run compiled `dist/` copies.)
 
 ### Correctness & robustness
 
@@ -263,13 +265,18 @@ deferred · `[-]` won't do (reason given). Test count so far: 176 → 223 (+47).
 - [x] **Discriminated `ContentBlock` union** (`types.ts`) — already existed
       before this branch (KNOWN_ISSUES prescribed it); extended here with the
       thinking-block variants.
-- [ ] **`markLastBlock` silently loses the moving cache breakpoint**
-      (`cache.ts:86`) — skips marking when the last content isn't an array.
-      Low impact; needs a guard + test.
-- [ ] **`memory.ts` stores `branch`/`cwd` as always-empty** (`memory.ts:78`) —
-      populate from git / session, or drop the dead fields.
-- [ ] **`history.ts` `res.json()` unguarded/unvalidated** (`history.ts:94`) —
-      validate the shape before `formatHits`.
+- [x] **`markLastBlock` silently loses the moving cache breakpoint**
+      (`cache.ts`) — place the moving breakpoint on the last _non-empty_
+      message so an empty trailing turn can't drop it (would cost a full
+      re-read). _New cache test._ `fix/ownership-hardening`
+- [x] **`memory.ts` stores `branch`/`cwd` as always-empty** (`memory.ts`) —
+      `extractMeta` now takes the session cwd and derives the git branch via
+      a best-effort `git rev-parse` (empty when not a repo).
+      `fix/ownership-hardening`
+- [x] **`history.ts` `res.json()` unguarded/unvalidated** (`history.ts`) —
+      guard the parse, reject non-array/non-JSON bodies, and filter entries
+      through an `isSearchHit` type guard before `formatHits`. _New tests._
+      `fix/ownership-hardening`
 
 ### Security
 

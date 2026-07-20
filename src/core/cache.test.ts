@@ -49,6 +49,21 @@ describe("applyCacheControl", () => {
       type: "ephemeral",
     });
   });
+
+  it("falls back to the last non-empty message when the last message is empty", () => {
+    const req = applyCacheControl("SYS", [], [
+      msg("user", "one"),
+      { role: "assistant", content: [] },
+    ] as Parameters<typeof applyCacheControl>[2]);
+    // Empty trailing message gets no marker...
+    expect(JSON.stringify(req.messages[1])).not.toContain("cache_control");
+    // ...but the moving breakpoint still lands on the prior real content,
+    // instead of being silently dropped (which would cost a full re-read).
+    const first = req.messages[0]!.content as Record<string, unknown>[];
+    expect(first[first.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+    });
+  });
 });
 
 describe("stripCacheControl", () => {

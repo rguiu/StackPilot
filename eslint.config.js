@@ -42,6 +42,7 @@ export default tseslint.config(
       "fixtures/",
       ".husky/",
       "eslint.config.js",
+      "vitest.config.ts",
       ".lintstagedrc.js",
       "scripts/",
     ],
