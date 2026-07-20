@@ -7,8 +7,9 @@ plus a second-pass survey of the tools/transport edge cases._
 
 Status snapshot at time of writing: `v0.1.0`, 37 commits, single author,
 `main` clean. Typecheck clean, **176 tests pass**, CI green (Node 20/22).
-(Section 7 below records the hardening done on branch `fix/ownership-hardening`,
-which took tests to 223.)
+**Section 7 is a living issue tracker** — every issue below is a checkbox there;
+tick it as work lands. First hardening pass (`fix/ownership-hardening`) took
+tests to 223.
 
 ---
 
@@ -226,29 +227,88 @@ real repos is items 1–4 above.
 
 ---
 
-## 7. Work completed on branch `fix/ownership-hardening`
+## 7. Issue tracker
 
-The first pass of hardening is done. Test count went 176 → 223 (+47).
+Living checklist of every issue raised in this analysis and its status. Update
+the box as work lands — this is the source of truth for "what's left," so keep
+it current rather than starting a fresh list.
 
-| #   | Item                                | What changed                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Patch corruption**                | `patch.ts` now validates context/deletions past EOF, cross-checks the header `srcLen` against the parsed body, range-checks hunk start, and refuses malformed diffs instead of splicing by a trusted count. Bare empty lines are no longer mis-consumed as context. **New:** `patch.test.ts` (10 tests, incl. every corruption path).                                                                                                                                         |
-| 2   | **Transport hardening**             | SSE `JSON.parse` is guarded (a malformed frame is skipped, not fatal); truncated tool-input JSON degrades to `{__malformed_json}` instead of aborting the turn; `thinking` / `redacted_thinking` blocks are preserved with signature (new union members in `types.ts`); mid-stream failures after text was emitted are wrapped in `MidStreamError` and made non-retryable (no duplicate output); `Retry-After` is now honored on 429/503. **New:** transport tests for these. |
-| 3   | **executeTool error containment**   | `index.ts` now converts _any_ thrown error (not just `ToolInputError`) into `{isError:true}`, so an EACCES/ENOSPC or malformed upstream response can't crash the turn or orphan a `tool_use` without its result. **New:** containment tests.                                                                                                                                                                                                                                  |
-| 4   | **WebFetch SSRF + Read validation** | `webfetch.ts` blocks loopback/link-local/RFC1918 hosts, resolves DNS to catch hostnames pointing inward, and follows redirects **manually** so every hop is re-validated. Also fixed two latent bugs (timeout / body-read paths weren't setting `isError`). `fs.ts` Read rejects `offset < 1` / non-positive `limit`. **New:** `webfetch.test.ts`, Read-validation tests.                                                                                                     |
-| 5   | **Bash process handling**           | Child spawned `detached` and killed by process group on timeout (no orphaned grandchildren); output capped _during_ streaming at 2× `MAX_OUTPUT` so a runaway command can't OOM the process. **New:** `shell.test.ts` (6 tests).                                                                                                                                                                                                                                              |
+**Legend:** `[x]` done · `[ ]` pending · `[~]` in progress · `[>]` delayed /
+deferred · `[-]` won't do (reason given). Test count so far: 176 → 223 (+47).
 
-Note: the discriminated `ContentBlock` union that `KNOWN_ISSUES.md` prescribed
-already existed in `src/types.ts` (done before this branch); this branch
-extended it with the thinking-block variants.
+### Correctness & robustness
 
-### Still open (next PRs)
+- [x] **Patch tool can silently corrupt files** (`patch.ts`) — validate
+      context/deletions past EOF, cross-check header `srcLen` against the parsed
+      body, range-check hunk start, refuse malformed diffs; stop mis-consuming
+      bare empty lines as context. _New `patch.test.ts` (10 tests)._
+      `fix/ownership-hardening`
+- [x] **Extended-thinking blocks flattened to text** (`anthropic.ts`) —
+      preserve `thinking` / `redacted_thinking` with signature (new union
+      members in `types.ts`). `fix/ownership-hardening`
+- [x] **Mid-stream retry duplicates output** (`anthropic.ts`) — wrap post-emit
+      failures in `MidStreamError`, make non-retryable; honor `Retry-After` on
+      429/503. `fix/ownership-hardening`
+- [x] **Unguarded `JSON.parse` in SSE hot path** (`anthropic.ts`) — skip a
+      malformed frame instead of aborting the turn; truncated tool-input JSON
+      degrades to `{__malformed_json}`. `fix/ownership-hardening`
+- [x] **`executeTool` only caught `ToolInputError`** (`index.ts`) — convert
+      _any_ thrown error to `{isError:true}` so a tool failure can't crash the
+      turn or orphan a `tool_use`. `fix/ownership-hardening`
+- [x] **Bash orphans processes / unbounded output** (`shell.ts`) — spawn
+      `detached`, kill the process group on timeout, cap output during
+      streaming. _New `shell.test.ts` (6 tests)._ `fix/ownership-hardening`
+- [x] **Read offset/limit unvalidated** (`fs.ts`) — reject `offset < 1` /
+      non-positive `limit`. `fix/ownership-hardening`
+- [x] **Discriminated `ContentBlock` union** (`types.ts`) — already existed
+      before this branch (KNOWN_ISSUES prescribed it); extended here with the
+      thinking-block variants.
+- [ ] **`markLastBlock` silently loses the moving cache breakpoint**
+      (`cache.ts:86`) — skips marking when the last content isn't an array.
+      Low impact; needs a guard + test.
+- [ ] **`memory.ts` stores `branch`/`cwd` as always-empty** (`memory.ts:78`) —
+      populate from git / session, or drop the dead fields.
+- [ ] **`history.ts` `res.json()` unguarded/unvalidated** (`history.ts:94`) —
+      validate the shape before `formatHits`.
 
-- Opt-in path confinement (workspace root) for file/patch tools; consider
-  gating WebFetch behind the permission prompt rather than permitless.
-- Test the remaining pure modules (`policies.ts`, `prompt.ts`); de-dup the
-  shared helpers (`toolUses`, `accumulate`, `absPath`, `sha`, `!`-handler);
-  fix `memory.ts` always-empty `branch`/`cwd`.
-- Graceful TUI shutdown on SIGINT mid-turn; rename `readOnly` →
-  `bypassPermission`; thread `cwd` through `TurnDeps`.
-- Strategic: minimal/lazy tool loading; publish A/B harness results.
+### Security
+
+- [x] **WebFetch SSRF** (`webfetch.ts`) — block loopback/link-local/RFC1918,
+      resolve DNS to catch inward-pointing names, follow redirects manually to
+      re-validate each hop. _New `webfetch.test.ts`._ `fix/ownership-hardening`
+- [ ] **No path containment** (`util/path.ts`, fs/patch tools) — opt-in
+      workspace-root confinement so Read/Write/Edit/Patch can't escape the
+      project. Read is permitless, so this is the notable gap.
+- [ ] **Consider gating WebFetch behind the permission prompt** rather than
+      leaving it `runPermitless` (defense-in-depth beyond the SSRF guard).
+- [>] **Bash has no sandbox** (`shell.ts`) — deferred; it's a Bash tool by
+  design, gated by the permission prompt. Revisit only if a sandbox mode is
+  added.
+
+### Semantic footguns
+
+- [ ] **`TodoWrite` flagged `readOnly` while mutating** — rename to
+      `bypassPermission`.
+- [ ] **`AgentState` circular reference is init-order-dependent**
+      (`agent.ts`) — make the registry wiring explicit.
+- [ ] **No graceful TUI shutdown on SIGINT mid-turn** (`tui/app.ts`) —
+      readline may be left in raw mode.
+
+### Test coverage & cleanup
+
+- [ ] **Test the remaining pure modules** — `policies.ts`, `prompt.ts`,
+      `instructions.ts`, `hooks.ts`, `subagent.ts`, `markdown.ts`.
+- [ ] **De-duplicate shared helpers** — `toolUses`, usage `accumulate`,
+      `absPath`, `sha`, the `!`-shell handler.
+- [ ] **Thread `cwd` through `TurnDeps`** instead of `process.cwd()` in loop
+      and subagent (portability/testability).
+- [ ] **Give the subagent the same context policies** (and consider its own
+      cache ledger).
+
+### Strategic
+
+- [ ] **Minimal/lazy tool loading** — marquee cache win in
+      `docs/OPTIMIZATION_IDEAS.md` (~30% cache-write savings).
+- [ ] **Publish A/B harness results** (policy on/off via `aap compare`).
+- [>] **Widen `transport/` to a provider interface** — deferred; only if
+  multi-provider becomes a goal (currently a stated non-goal for v1).
