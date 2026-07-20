@@ -1,19 +1,10 @@
 // Pure text formatters for the TUI. No I/O here — everything returns a
 // string so it can be unit-tested without a terminal.
 
-import { bold, cyan, dim, green, magenta, red, yellow } from "./ansi.js";
+import { bold, dim, green, magenta, red, yellow } from "./ansi.js";
 import type { TurnStats } from "../core/loop.js";
 import { formatUsd } from "../core/cost.js";
 import type { TodoItem } from "../tools/todo.js";
-
-export function banner(model: string, sessionId: string, cwd: string): string {
-  return [
-    bold(cyan("stackpilot")) +
-      dim(` · ${model} · session ${sessionId.slice(0, 8)}`),
-    dim(`cwd ${cwd}`),
-    dim("enter to send · esc interrupts · /help for commands"),
-  ].join("\n");
-}
 
 export function helpText(): string {
   return [
@@ -155,26 +146,6 @@ export function interrupted(): string {
   return yellow("· interrupted (partial turn discarded)");
 }
 
-// --- Diff rendering --------------------------------------------------------
-
-export function diffLine(line: string): string {
-  if (line.startsWith("+")) return green(line);
-  if (line.startsWith("-")) return red(line);
-  if (line.startsWith("@@")) return cyan(line);
-  if (line.startsWith("---") || line.startsWith("+++")) return bold(line);
-  return dim(line);
-}
-
-export function renderDiff(patch: string, limit = 30): string {
-  const lines = patch.split("\n");
-  const head = lines.slice(0, limit);
-  const suffix =
-    lines.length > limit
-      ? `\n${dim(`… ${lines.length - limit} more lines`)}`
-      : "";
-  return head.map(diffLine).join("\n") + suffix;
-}
-
 // --- Rich tool output ------------------------------------------------------
 
 export function richToolOutput(
@@ -187,8 +158,11 @@ export function richToolOutput(
     return red(`✗ ${toolName}: ${first}`);
   }
 
-  if (toolName === "Edit" || toolName === "Patch") {
-    return renderDiff(output);
+  // Write/Edit/Patch return a short status line ("wrote …", "replaced N …",
+  // "patched …"), not a diff — show it as a success line. (renderDiff/diffLine
+  // remain available for callers that actually have +/- diff text.)
+  if (toolName === "Write" || toolName === "Edit" || toolName === "Patch") {
+    return green(`✓ ${output}`);
   }
 
   if (toolName === "Read" || toolName === "Grep") {
@@ -197,10 +171,6 @@ export function richToolOutput(
     const head = lines.slice(0, 12).join("\n");
     const tail = lines.slice(-3).join("\n");
     return `${dim(head)}\n${dim("  …")}\n${dim(tail)}\n${dim(`${lines.length} lines total`)}`;
-  }
-
-  if (toolName === "Write") {
-    return green(`✓ ${output}`);
   }
 
   if (output.length > 500) {

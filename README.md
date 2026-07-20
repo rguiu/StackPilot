@@ -119,7 +119,8 @@ support rewind/resume, and replay deterministically.
 
 Inline terminal UI with readline input, Esc interrupt, spinner, permission
 prompts with session allowlists and deny-with-feedback, arrow-key session picker,
-markdown rendering, diff colorization, and `!` prefix for direct shell commands.
+streaming markdown rendering (headings, bold/italic, lists, fenced code
+blocks), and `!` prefix for direct shell commands.
 
 ### Tools (14)
 

@@ -26,7 +26,12 @@ import { createRegistry, unknownToolNames } from "../tools/index.js";
 import { discoverSkills, formatAvailableSkills } from "../tools/skill.js";
 import { streamWithRetry } from "../transport/anthropic.js";
 import { runApp } from "../tui/app.js";
-import { formatAge, permissionPromptPlain } from "../tui/render.js";
+import {
+  formatAge,
+  permissionPromptPlain,
+  toolStartLine,
+  toolEndLine,
+} from "../tui/render.js";
 import { runHook, logHookResult } from "../core/hooks.js";
 import { openMemoryDb, storeSessionMeta } from "../tools/memory.js";
 import type { SessionState } from "../core/policies.js";
@@ -178,14 +183,10 @@ function makeIO(rl: Interface | null, yolo: boolean, json = false): TurnIO {
   return {
     onText: (d) => process.stdout.write(d),
     onToolStart: (name, input) => {
-      const brief = JSON.stringify(input);
-      process.stderr.write(
-        `\n⏺ ${name} ${brief.length > 120 ? brief.slice(0, 120) + "…" : brief}\n`,
-      );
+      process.stderr.write(`\n${toolStartLine(name, input)}\n`);
     },
     onToolEnd: (_name, output, isError) => {
-      const first = output.split("\n")[0] ?? "";
-      process.stderr.write(`  ${isError ? "✗" : "✓"} ${first.slice(0, 100)}\n`);
+      process.stderr.write(`${toolEndLine(output, isError)}\n`);
     },
     permit: async (name, input) => {
       if (yolo) return { allowed: true };

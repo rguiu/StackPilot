@@ -14,6 +14,7 @@ import {
   richToolOutput,
   statsLine,
   todoBox,
+  toolStartLine,
   usageSummary,
 } from "./render.js";
 import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
@@ -133,17 +134,18 @@ export async function runApp(deps: AppDeps): Promise<void> {
         streamedAnything = true;
         process.stdout.write("\n");
       }
-      process.stdout.write(delta);
+      // Feed deltas through the markdown renderer, which emits completed lines
+      // (headings, bold, lists, code blocks) and buffers the partial tail. The
+      // flush() calls on tool boundaries and turn end drain that tail.
+      const rendered = md.push(delta);
+      if (rendered.length > 0) process.stdout.write(rendered + "\n");
     },
     onToolStart: (name, input) => {
       stopSpinner();
       const flushed = md.flush();
       if (flushed.length > 0) process.stdout.write(flushed + "\n");
       md.reset();
-      const brief = JSON.stringify(input);
-      process.stdout.write(
-        `\n${cyan("⏺")} ${name} ${brief.length > 120 ? brief.slice(0, 120) + "…" : brief}\n`,
-      );
+      process.stdout.write(`\n${toolStartLine(name, input)}\n`);
       streamedAnything = false;
       startSpinner("running…");
     },
