@@ -323,16 +323,30 @@ export async function main(): Promise<void> {
       // memory extraction is best-effort
     }
   }
-  process.once("SIGINT", () => {
+  // Leave the terminal usable on signal exit: the TUI puts stdin in raw mode
+  // and hides the cursor, and an abrupt process.exit would strand the user's
+  // shell in that state. Restore before exiting.
+  function restoreTerminal(): void {
+    try {
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } catch {
+      // stdin may already be closed
+    }
+    process.stdout.write("\x1b[?25h"); // show cursor
+  }
+  function signalExit(): void {
     fireSessionEnd()
-      .then(() => process.exit(0))
-      .catch(() => process.exit(0));
-  });
-  process.once("SIGTERM", () => {
-    fireSessionEnd()
-      .then(() => process.exit(0))
-      .catch(() => process.exit(0));
-  });
+      .then(() => {
+        restoreTerminal();
+        process.exit(0);
+      })
+      .catch(() => {
+        restoreTerminal();
+        process.exit(0);
+      });
+  }
+  process.once("SIGINT", signalExit);
+  process.once("SIGTERM", signalExit);
 
   if (args.prompt !== undefined) {
     const io = makeIO(null, args.yolo, args.json);

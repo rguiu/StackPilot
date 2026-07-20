@@ -279,7 +279,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
       options: registry.defs.map((d) => ({
         value: d.name,
         label: d.name,
-        hint: d.runPermitless ? "read-only" : "mutating",
+        hint: d.runPermitless ? "no prompt" : "asks permission",
       })),
       initialValues: registry.enabledNames(),
       required: false,
