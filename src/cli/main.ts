@@ -349,6 +349,7 @@ export async function main(): Promise<void> {
         hooks,
         sessionState,
         maxToolResultChars: appConfig.maxToolResultChars,
+        autoCompactAtTokens: appConfig.autoCompactAtTokens,
       },
       args.prompt,
     );
