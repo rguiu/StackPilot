@@ -36,18 +36,47 @@ describe("applyCacheControl", () => {
     ]);
   });
 
-  it("marks only the last block of the last message (moving breakpoint)", () => {
+  it("marks the moving (last) and anchor (first) breakpoints, not the middle", () => {
     const req = applyCacheControl(
       "SYS",
       [],
       [msg("user", "one"), msg("assistant", "two"), msg("user", "three")],
     );
-    expect(JSON.stringify(req.messages[0])).not.toContain("cache_control");
+    // Anchor breakpoint pins the stable opening turn.
+    const first = req.messages[0]!.content as Record<string, unknown>[];
+    expect(first[first.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+    });
+    // Middle message is never marked.
     expect(JSON.stringify(req.messages[1])).not.toContain("cache_control");
+    // Moving breakpoint extends the tail.
     const last = req.messages[2]!.content as Record<string, unknown>[];
     expect(last[last.length - 1]!.cache_control).toEqual({
       type: "ephemeral",
     });
+  });
+
+  it("skips the anchor when only one message has content (no double-mark)", () => {
+    const req = applyCacheControl("SYS", [], [msg("user", "only")]);
+    const only = req.messages[0]!.content as Record<string, unknown>[];
+    // Exactly one marker on the single message (moving == anchor collapsed).
+    const markers = only.filter((b) => "cache_control" in b);
+    expect(markers).toHaveLength(1);
+  });
+
+  it("never exceeds four cache_control markers", () => {
+    const req = applyCacheControl(
+      "SYS with # Project and user instructions dynamic tail",
+      [],
+      [
+        msg("user", "one"),
+        msg("assistant", "two"),
+        msg("user", "three"),
+        msg("assistant", "four"),
+      ],
+    );
+    const count = JSON.stringify(req).split('"cache_control"').length - 1;
+    expect(count).toBeLessThanOrEqual(4);
   });
 
   it("falls back to the last non-empty message when the last message is empty", () => {

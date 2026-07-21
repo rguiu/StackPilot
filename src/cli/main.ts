@@ -22,7 +22,11 @@ import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
 import { reduce } from "../core/reducer.js";
 import { SessionStore } from "../session/store.js";
-import { createRegistry, unknownToolNames } from "../tools/index.js";
+import {
+  createRegistry,
+  unknownToolNames,
+  CORE_TOOLS,
+} from "../tools/index.js";
 import { discoverSkills, formatAvailableSkills } from "../tools/skill.js";
 import { streamWithRetry } from "../transport/anthropic.js";
 import { runApp } from "../tui/app.js";
@@ -281,12 +285,19 @@ export async function main(): Promise<void> {
     }
     registry.setEnabled(enabledTools);
   }
+  // Progressive tool loading: activate only the exploration core up front;
+  // other allowed tools ship as name-only advertisements and load their
+  // schemas on first use (see loop.ts dispatchTool / registry.activate).
+  if (appConfig.progressiveTools) {
+    registry.setActive(CORE_TOOLS);
+  }
   const system = buildSystemPrompt(
     cwd,
     config.model,
     loadInstructions(cwd, homedir()),
     skillsAvailable,
     getGitContext(cwd),
+    registry.deferredTools(),
   );
   const ledger = new CacheLedger();
   const hooks = appConfig.hooks;
@@ -364,6 +375,7 @@ export async function main(): Promise<void> {
         hooks,
         sessionState,
         maxToolResultChars: appConfig.maxToolResultChars,
+        autoCompactAtTokens: appConfig.autoCompactAtTokens,
       },
       args.prompt,
     );

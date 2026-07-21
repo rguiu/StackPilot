@@ -46,6 +46,11 @@ export interface AppConfig {
   // outside the workspace root (git root, else cwd). Off by default to keep
   // out-of-repo reads working; opt in for untrusted/autonomous runs.
   confineToWorkspace: boolean;
+  // When true, sessions start with only the core exploration tools' schemas
+  // (Read/Grep/Glob); other allowed tools are advertised by name in the system
+  // prompt and their schemas activate on first use. Shrinks the cached tool
+  // prefix at cold start. Off by default.
+  progressiveTools: boolean;
 }
 
 export function configPath(
@@ -389,6 +394,12 @@ export function loadAppConfig(
   }
   const confineToWorkspace = confineRaw === true;
 
+  const progRaw = file.progressiveTools;
+  if (progRaw !== undefined && typeof progRaw !== "boolean") {
+    throw new ConfigError("progressiveTools must be a boolean");
+  }
+  const progressiveTools = progRaw === true;
+
   return {
     transport,
     pricing: parsePricing(file.pricing, path),
@@ -397,6 +408,7 @@ export function loadAppConfig(
     hooks: parseHooks(file.hooks, path),
     maxToolResultChars,
     confineToWorkspace,
+    progressiveTools,
   };
 }
 

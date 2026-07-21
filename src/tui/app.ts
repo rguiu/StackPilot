@@ -439,6 +439,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
             hooks: deps.hooks,
             sessionState: deps.sessionState,
             maxToolResultChars: deps.maxToolResultChars,
+            autoCompactAtTokens: autoCompactState.value,
           },
           line,
         );
@@ -450,17 +451,11 @@ export async function runApp(deps: AppDeps): Promise<void> {
         for (const note of stats.notes) {
           process.stdout.write(dim(`⚠ ${note}`) + "\n");
         }
-        if (
-          autoCompactState.value > 0 &&
-          stats.lastRequestInputTokens >= autoCompactState.value
-        ) {
-          process.stdout.write(
-            dim(
-              `context ${stats.lastRequestInputTokens} tokens ≥ ${autoCompactState.value} threshold — auto-compacting`,
-            ) + "\n",
-          );
-          await doCompact("auto");
-        }
+        // Auto-compaction now runs inside runTurn (see loop.ts maybeCompact),
+        // so it also covers headless runs and long in-turn tool chains. The
+        // threshold is passed via autoCompactAtTokens above; runTurn emits an
+        // "auto-compacted…" note, printed in the loop above. Manual /compact
+        // still calls doCompact directly.
       } catch (err) {
         stopSpinner();
         md.reset();

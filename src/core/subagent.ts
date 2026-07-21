@@ -58,16 +58,22 @@ const GENERAL_SYSTEM = [
 ].join("\n");
 
 function pickTools(registry: Registry, type: string): unknown[] {
+  // Subagents are ephemeral (no prompt caching), so progressive tool loading
+  // gives them no benefit and must not narrow their toolset. Build from every
+  // ALLOWED tool, ignoring the parent's active set.
+  const allowed = registry.defs
+    .filter((d) => registry.isEnabled(d.name))
+    .map((d) => ({
+      name: d.name,
+      description: d.description,
+      input_schema: d.inputSchema,
+    }));
   if (type === "explore") {
-    return registry
-      .schemas()
-      .filter((t) =>
-        ["Read", "Grep", "Glob", "SearchMemory", "SearchFiles"].includes(
-          t.name,
-        ),
-      );
+    return allowed.filter((t) =>
+      ["Read", "Grep", "Glob", "SearchMemory", "SearchFiles"].includes(t.name),
+    );
   }
-  return registry.schemas();
+  return allowed;
 }
 
 export async function runSubagent(

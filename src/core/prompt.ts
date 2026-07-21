@@ -58,6 +58,7 @@ export function buildSystemPrompt(
   instructions: string,
   skillsText: string,
   gitCtx: GitContext | null,
+  deferredTools: { name: string; description: string }[] = [],
 ): string {
   const sections: string[] = [];
 
@@ -121,6 +122,16 @@ export function buildSystemPrompt(
     "- Use Agent for focused tasks that would bloat the main conversation.",
     "- Subagent results are text-only — delegate research, don't duplicate it.",
   );
+
+  if (deferredTools.length > 0) {
+    sections.push(
+      "",
+      "# Additional tools (loaded on demand)",
+      "These tools are available but their full schemas are not yet loaded, to keep the context small. Call one by name when you need it — its schema activates automatically for subsequent calls. Use them exactly as the equivalently-named Claude Code tools.",
+      "",
+      ...deferredTools.map((t) => `- ${t.name}: ${t.description}`),
+    );
+  }
 
   if (skillsText.length > 0) {
     sections.push("", skillsText);

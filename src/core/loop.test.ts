@@ -118,6 +118,116 @@ describe("runTurn tool_use/tool_result invariant", () => {
     expect(resultsFor).toEqual(uses);
   });
 
+  it("auto-compacts mid-turn when the stack crosses the token threshold", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    const registry = createRegistry();
+    registry.setEnabled(["Read"]); // avoid running a real shell command
+    let call = 0;
+    const deps: TurnDeps = {
+      cwd: "/fake/cwd",
+      store,
+      registry,
+      config,
+      system: "test",
+      autoCompactAtTokens: 1000,
+      io: silentIO(() => Promise.resolve({ allowed: false })),
+      stream: async () => {
+        // 1st: model calls a tool with a huge input_tokens (crosses threshold).
+        // The between-iteration maybeCompact then issues a compaction request.
+        // 2nd (compaction): return the summary text.
+        // 3rd: model ends the turn.
+        if (call++ === 0) {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                id: "tu_1",
+                name: "Read",
+                input: { file_path: "/fake/cwd/x" },
+              },
+            ],
+            stopReason: "tool_use",
+            usage: { input_tokens: 2000, output_tokens: 5 },
+            model: "test-model",
+          };
+        }
+        if (call === 2) return textResponse("## Goal\nsummary");
+        return textResponse("done");
+      },
+    };
+
+    const stats = await runTurn(deps, "do something");
+
+    const summaries = store.all().filter((e) => e.isCompactSummary === true);
+    expect(summaries).toHaveLength(1);
+    expect(stats.notes.some((n) => n.includes("auto-compacted"))).toBe(true);
+  });
+
+  it("does not compact when lastRequestInputTokens stays below the threshold", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    const registry = createRegistry();
+    registry.setEnabled(["Read"]);
+    let call = 0;
+    const deps: TurnDeps = {
+      cwd: "/fake/cwd",
+      store,
+      registry,
+      config,
+      system: "test",
+      autoCompactAtTokens: 1_000_000,
+      io: silentIO(() => Promise.resolve({ allowed: false })),
+      stream: async () => {
+        if (call++ === 0) {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                id: "tu_1",
+                name: "Read",
+                input: { file_path: "/fake/cwd/x" },
+              },
+            ],
+            stopReason: "tool_use",
+            usage: { input_tokens: 10, output_tokens: 5 },
+            model: "test-model",
+          };
+        }
+        return textResponse("done");
+      },
+    };
+
+    await runTurn(deps, "do something");
+
+    const summaries = store.all().filter((e) => e.isCompactSummary === true);
+    expect(summaries).toHaveLength(0);
+  });
+
+  it("activates a deferred tool's schema on first use", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    const registry = createRegistry();
+    registry.setActive(["Read"]); // Bash allowed but deferred
+    expect(registry.schemas().map((s) => s.name)).toEqual(["Read"]);
+    let call = 0;
+    const deps: TurnDeps = {
+      cwd: "/fake/cwd",
+      store,
+      registry,
+      config,
+      system: "test",
+      io: silentIO(() => Promise.resolve({ allowed: false })), // deny → no shell run
+      stream: async () =>
+        call++ === 0 ? toolUseResponse() : textResponse("done"),
+    };
+
+    const stats = await runTurn(deps, "run ls");
+
+    // Bash was called → its schema is now active for subsequent requests.
+    expect(registry.schemas().map((s) => s.name)).toContain("Bash");
+    expect(
+      stats.notes.some((n) => n.includes("activated tool schema: Bash")),
+    ).toBe(true);
+  });
+
   it("rejects a disabled tool without consulting the permission gate", async () => {
     const store = SessionStore.create("/fake/cwd", home);
     const registry = createRegistry();

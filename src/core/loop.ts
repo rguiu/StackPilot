@@ -4,6 +4,7 @@
 
 import type { SessionStore } from "../session/store.js";
 import { reduce } from "./reducer.js";
+import { runCompact } from "./compact.js";
 import { applyCacheControl, type CacheLedger } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
 import {
@@ -66,7 +67,21 @@ export interface TurnDeps {
     postTool?: HookConfig;
     sessionStart?: HookConfig;
     sessionEnd?: HookConfig;
+    preCompact?: HookConfig;
+    postCompact?: HookConfig;
   };
+  // When the last request's total input tokens reach this value, compact
+  // before the next request. 0/undefined disables. Checked in runTurn so
+  // both the headless (-p) path and long in-turn tool chains stay bounded —
+  // not just the TUI. Compaction is a pure append to the cached prefix, so
+  // the summary itself bills at cache-read rates.
+  autoCompactAtTokens?: number;
+  // Notified when an auto-compaction runs mid-turn, so the UI can surface it.
+  onCompact?: (info: {
+    totalMessages: number;
+    summaryChars: number;
+    costUsd: number | null;
+  }) => void;
   stream(
     cfg: TransportConfig,
     req: MessagesRequest,
@@ -241,6 +256,13 @@ export async function runTurn(
     if (!toolResultEvent.uuid) throw new Error("store.append returned no uuid");
     leaf = toolResultEvent.uuid;
 
+    // Compact between iterations once the stack crosses the threshold. This is
+    // a clean boundary: every tool_use has its tool_result sibling, so the
+    // reducer restarts from the summary without orphaning a pending call. The
+    // summary is appended as an isCompactSummary user event; the next iteration
+    // reduces from it, shrinking the API-visible history.
+    leaf = await maybeCompact(deps, stats, leaf);
+
     if (i === MAX_ITERATIONS - 1) {
       stats.notes.push(
         `reached max iterations (${MAX_ITERATIONS}) — turn truncated`,
@@ -249,6 +271,62 @@ export async function runTurn(
   }
 
   return stats;
+}
+
+// Runs auto-compaction when the last request's total input tokens reach the
+// configured threshold. Returns the new leaf uuid (the summary event) on
+// success, or the unchanged leaf when compaction is disabled, not yet
+// triggered, or produced nothing. Failures are non-fatal: a note is recorded
+// and the turn continues on the uncompacted stack.
+async function maybeCompact(
+  deps: TurnDeps,
+  stats: TurnStats,
+  leaf: string,
+): Promise<string> {
+  const threshold = deps.autoCompactAtTokens ?? 0;
+  if (threshold <= 0 || stats.lastRequestInputTokens < threshold) return leaf;
+
+  try {
+    const res = await runCompact({
+      store: deps.store,
+      registry: deps.registry,
+      config: deps.config,
+      system: deps.system,
+      pricing: deps.pricing,
+      signal: deps.signal,
+      stream: (cfg, req, onText, signal) =>
+        deps.stream(cfg, req, onText, signal),
+      hooks: deps.hooks
+        ? {
+            preCompact: deps.hooks.preCompact,
+            postCompact: deps.hooks.postCompact,
+          }
+        : undefined,
+    });
+    if (!res) return leaf;
+
+    if (res.costUsd !== null) {
+      stats.costUsd = (stats.costUsd ?? 0) + res.costUsd;
+    }
+    stats.notes.push(
+      `auto-compacted at ${stats.lastRequestInputTokens} tokens (≥ ${threshold}): ${res.totalMessages} messages → ${res.summaryChars}-char summary`,
+    );
+    deps.onCompact?.({
+      totalMessages: res.totalMessages,
+      summaryChars: res.summaryChars,
+      costUsd: res.costUsd,
+    });
+
+    // The summary is the new leaf; subsequent iterations parent to it.
+    const newLeaf = reduce(deps.store.all()).leafUuid;
+    return newLeaf ?? leaf;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") throw err;
+    stats.notes.push(
+      `auto-compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return leaf;
+  }
 }
 
 async function dispatchTool(
@@ -270,7 +348,17 @@ async function dispatchTool(
   } else if (!registry.isEnabled(use.name)) {
     output = `tool disabled for this session: ${use.name}`;
     isError = true;
-  } else if (!def.runPermitless) {
+  } else {
+    // Progressive tool loading: the model called an allowed-but-deferred tool
+    // (advertised by name in the system prompt, schema not yet shipped).
+    // Activate it so its full schema joins the prefix on the next request —
+    // one deliberate cache write, then cached thereafter. The current call
+    // still executes normally; inputs are validated in executeTool.
+    if (registry.activate(use.name)) {
+      stats.notes.push(`activated tool schema: ${use.name}`);
+    }
+  }
+  if (!isError && def && !def.runPermitless) {
     const perm = await io.permit(use.name, input);
     if (!perm.allowed) {
       output = perm.reason

@@ -8,7 +8,14 @@ that are not yet implemented.
 
 ## Cache Optimizations
 
-### 1. Minimal tool loading (highest ROI)
+### 1. Minimal tool loading (highest ROI) — ✅ IMPLEMENTED
+
+**Status:** Shipped behind `progressiveTools` (config, default off). Sessions
+activate only `CORE_TOOLS` (Read/Grep/Glob) up front; other allowed tools are
+advertised by name in the system prompt and their schemas activate on first
+use via `registry.activate()` in `loop.ts` dispatch. See `src/tools/index.ts`
+(active vs allow set) and the "Additional tools (loaded on demand)" prompt
+section.
 
 **What:** Start sessions with a minimal tool set (Read, Grep, Glob) and add
 tools (Write, Edit, Bash) lazily when the model first tries to use them.
@@ -39,7 +46,14 @@ minimal output). Saves full cache write cost on turn 1.
 **Implementation:** After session start, run a no-op `streamMessage` with
 a single user text block `"cache warmup"`.
 
-### 3. Fourth cache breakpoint
+### 3. Fourth cache breakpoint — ✅ IMPLEMENTED
+
+**Status:** Shipped. `applyCacheControl` now marks an anchor breakpoint on the
+first non-empty message's last block in addition to the moving breakpoint on
+the last, splitting the message prefix into stable-early and volatile-recent
+segments. Collapses to a single marker on a one-message stack, and the total
+never exceeds the 4-marker server limit (2 system + anchor + moving). See
+`src/core/cache.ts` and the cache tests.
 
 **What:** Use the 4th allowed breakpoint to split the messages prefix into
 two segments — early context (stable) and recent context (volatile).
