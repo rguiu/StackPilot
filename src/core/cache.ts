@@ -6,15 +6,24 @@
 // previous request so we can PREDICT what a stack change will invalidate
 // and DETECT regenerations from the usage counters the server returns.
 //
-// Breakpoint layout (3 of the 4 allowed):
+// Breakpoint layout (all 4 allowed):
 //   1. static  — first system block: identity + static rules (never changes
 //      within a session; cache persists across turns)
 //   2. static  — second system block: instructions + git + skills (may
 //      change between sessions but not within; separate cache from block 1
 //      so a CLAUDE.md reload only invalidates this block)
-//   3. moving  — last content block of the last message: each turn extends
+//   3. anchor  — last content block of the FIRST message: pins the stable
+//      early conversation (the opening user turn never changes) as its own
+//      cached segment. If a policy rewrites the recent tail (paging shift,
+//      injected reminder, eviction), the server still matches this prefix,
+//      so only the tail re-reads instead of the whole message history.
+//   4. moving  — last content block of the last message: each turn extends
 //      the cached conversation; the server prefix-matches against recent
 //      breakpoints, so appending is a hit and mutating history is a miss.
+//
+// The server allows at most 4 cache_control markers. When the first and last
+// message coincide (single-message stack) the anchor is skipped so we never
+// exceed the limit or mark the same block twice.
 
 import { sha256 } from "../util/hash.js";
 import type { ContentBlock } from "../types.js";
@@ -64,20 +73,41 @@ export function applyCacheControl(
   // Marking the literal last message would silently drop the breakpoint when
   // that message is empty (e.g. a trailing user turn with no blocks yet),
   // costing a full cache re-read on the next turn.
-  let markIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const c = messages[i]?.content;
-    if (Array.isArray(c) && c.length > 0) {
-      markIdx = i;
-      break;
-    }
-  }
+  const movingIdx = lastNonEmptyIndex(messages);
+
+  // The anchor breakpoint pins the stable early context: the first message
+  // that has content. Skipped when it coincides with the moving breakpoint
+  // (single-message stack) — one marker covers it.
+  const anchorIdx = firstNonEmptyIndex(messages);
+  const markAnchor = anchorIdx !== -1 && anchorIdx !== movingIdx;
+
   const marked =
-    markIdx === -1
+    movingIdx === -1
       ? messages
-      : messages.map((m, i) => (i === markIdx ? markLastBlock(m) : m));
+      : messages.map((m, i) => {
+          if (i === movingIdx || (markAnchor && i === anchorIdx)) {
+            return markLastBlock(m);
+          }
+          return m;
+        });
 
   return { system: systemBlocks, tools, messages: marked };
+}
+
+function firstNonEmptyIndex(messages: Message[]): number {
+  for (let i = 0; i < messages.length; i++) {
+    const c = messages[i]?.content;
+    if (Array.isArray(c) && c.length > 0) return i;
+  }
+  return -1;
+}
+
+function lastNonEmptyIndex(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const c = messages[i]?.content;
+    if (Array.isArray(c) && c.length > 0) return i;
+  }
+  return -1;
 }
 
 // Heuristic split point: where dynamic per-session content begins.
