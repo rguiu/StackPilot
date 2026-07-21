@@ -26,7 +26,12 @@ import { createRegistry, unknownToolNames } from "../tools/index.js";
 import { discoverSkills, formatAvailableSkills } from "../tools/skill.js";
 import { streamWithRetry } from "../transport/anthropic.js";
 import { runApp } from "../tui/app.js";
-import { formatAge, permissionPromptPlain } from "../tui/render.js";
+import {
+  formatAge,
+  permissionPromptPlain,
+  toolStartLine,
+  toolEndLine,
+} from "../tui/render.js";
 import { runHook, logHookResult } from "../core/hooks.js";
 import { openMemoryDb, storeSessionMeta } from "../tools/memory.js";
 import type { SessionState } from "../core/policies.js";
@@ -178,14 +183,10 @@ function makeIO(rl: Interface | null, yolo: boolean, json = false): TurnIO {
   return {
     onText: (d) => process.stdout.write(d),
     onToolStart: (name, input) => {
-      const brief = JSON.stringify(input);
-      process.stderr.write(
-        `\n⏺ ${name} ${brief.length > 120 ? brief.slice(0, 120) + "…" : brief}\n`,
-      );
+      process.stderr.write(`\n${toolStartLine(name, input)}\n`);
     },
     onToolEnd: (_name, output, isError) => {
-      const first = output.split("\n")[0] ?? "";
-      process.stderr.write(`  ${isError ? "✗" : "✓"} ${first.slice(0, 100)}\n`);
+      process.stderr.write(`${toolEndLine(output, isError)}\n`);
     },
     permit: async (name, input) => {
       if (yolo) return { allowed: true };
@@ -322,16 +323,30 @@ export async function main(): Promise<void> {
       // memory extraction is best-effort
     }
   }
-  process.once("SIGINT", () => {
+  // Leave the terminal usable on signal exit: the TUI puts stdin in raw mode
+  // and hides the cursor, and an abrupt process.exit would strand the user's
+  // shell in that state. Restore before exiting.
+  function restoreTerminal(): void {
+    try {
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } catch {
+      // stdin may already be closed
+    }
+    process.stdout.write("\x1b[?25h"); // show cursor
+  }
+  function signalExit(): void {
     fireSessionEnd()
-      .then(() => process.exit(0))
-      .catch(() => process.exit(0));
-  });
-  process.once("SIGTERM", () => {
-    fireSessionEnd()
-      .then(() => process.exit(0))
-      .catch(() => process.exit(0));
-  });
+      .then(() => {
+        restoreTerminal();
+        process.exit(0);
+      })
+      .catch(() => {
+        restoreTerminal();
+        process.exit(0);
+      });
+  }
+  process.once("SIGINT", signalExit);
+  process.once("SIGTERM", signalExit);
 
   if (args.prompt !== undefined) {
     const io = makeIO(null, args.yolo, args.json);
