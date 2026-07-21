@@ -348,7 +348,17 @@ async function dispatchTool(
   } else if (!registry.isEnabled(use.name)) {
     output = `tool disabled for this session: ${use.name}`;
     isError = true;
-  } else if (!def.runPermitless) {
+  } else {
+    // Progressive tool loading: the model called an allowed-but-deferred tool
+    // (advertised by name in the system prompt, schema not yet shipped).
+    // Activate it so its full schema joins the prefix on the next request —
+    // one deliberate cache write, then cached thereafter. The current call
+    // still executes normally; inputs are validated in executeTool.
+    if (registry.activate(use.name)) {
+      stats.notes.push(`activated tool schema: ${use.name}`);
+    }
+  }
+  if (!isError && def && !def.runPermitless) {
     const perm = await io.permit(use.name, input);
     if (!perm.allowed) {
       output = perm.reason

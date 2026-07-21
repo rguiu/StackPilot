@@ -8,7 +8,14 @@ that are not yet implemented.
 
 ## Cache Optimizations
 
-### 1. Minimal tool loading (highest ROI)
+### 1. Minimal tool loading (highest ROI) — ✅ IMPLEMENTED
+
+**Status:** Shipped behind `progressiveTools` (config, default off). Sessions
+activate only `CORE_TOOLS` (Read/Grep/Glob) up front; other allowed tools are
+advertised by name in the system prompt and their schemas activate on first
+use via `registry.activate()` in `loop.ts` dispatch. See `src/tools/index.ts`
+(active vs allow set) and the "Additional tools (loaded on demand)" prompt
+section.
 
 **What:** Start sessions with a minimal tool set (Read, Grep, Glob) and add
 tools (Write, Edit, Bash) lazily when the model first tries to use them.

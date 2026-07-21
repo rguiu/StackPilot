@@ -176,3 +176,45 @@ describe("registry enabled-set filtering", () => {
     ]);
   });
 });
+
+describe("progressive tool loading (active set)", () => {
+  it("defaults to all tools active with no deferred tools", () => {
+    const r = createRegistry();
+    expect(r.deferredTools()).toEqual([]);
+    expect(r.activate("Bash")).toBe(false); // nothing to do when all active
+  });
+
+  it("ships only active schemas and advertises the rest as deferred", () => {
+    const r = createRegistry();
+    r.setActive(["Read", "Grep", "Glob"]);
+    expect(r.schemas().map((s) => s.name)).toEqual(["Read", "Grep", "Glob"]);
+    const deferred = r.deferredTools().map((t) => t.name);
+    expect(deferred).toContain("Bash");
+    expect(deferred).not.toContain("Read");
+  });
+
+  it("activate() adds one tool's schema and clears it from deferred", () => {
+    const r = createRegistry();
+    r.setActive(["Read"]);
+    expect(r.activate("Bash")).toBe(true);
+    expect(r.schemas().map((s) => s.name)).toEqual(["Read", "Bash"]); // canonical order
+    expect(r.deferredTools().map((t) => t.name)).not.toContain("Bash");
+    expect(r.activate("Bash")).toBe(false); // already active
+  });
+
+  it("never activates a disallowed tool", () => {
+    const r = createRegistry();
+    r.setEnabled(["Read", "Grep"]); // Bash not allowed
+    r.setActive(["Read"]);
+    expect(r.activate("Bash")).toBe(false);
+    expect(r.schemas().map((s) => s.name)).toEqual(["Read"]);
+    // deferred reflects allow ∩ inactive, so Bash (disallowed) is excluded
+    expect(r.deferredTools().map((t) => t.name)).toEqual(["Grep"]);
+  });
+
+  it("activate() is a no-op for unknown tools", () => {
+    const r = createRegistry();
+    r.setActive(["Read"]);
+    expect(r.activate("Nope")).toBe(false);
+  });
+});

@@ -21,6 +21,13 @@ autoCompactAtTokens = 160000
 # so out-of-repo reads keep working; turn on for untrusted or autonomous runs.
 # confineToWorkspace = false
 
+# Progressive tool loading. When true, sessions start with only the core
+# exploration tools' schemas (Read/Grep/Glob); every other allowed tool is
+# advertised by name in the system prompt and its full schema is loaded the
+# first time the model calls it. Shrinks the cached tool prefix (~12K tokens)
+# at cold start — biggest win on short sessions. Off by default.
+# progressiveTools = false
+
 # Retry behaviour for transient failures (5xx, 429, network errors).
 # Exponential backoff with jitter. Set maxRetries = 0 to disable.
 # [retry]

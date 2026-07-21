@@ -202,6 +202,32 @@ describe("runTurn tool_use/tool_result invariant", () => {
     expect(summaries).toHaveLength(0);
   });
 
+  it("activates a deferred tool's schema on first use", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    const registry = createRegistry();
+    registry.setActive(["Read"]); // Bash allowed but deferred
+    expect(registry.schemas().map((s) => s.name)).toEqual(["Read"]);
+    let call = 0;
+    const deps: TurnDeps = {
+      cwd: "/fake/cwd",
+      store,
+      registry,
+      config,
+      system: "test",
+      io: silentIO(() => Promise.resolve({ allowed: false })), // deny → no shell run
+      stream: async () =>
+        call++ === 0 ? toolUseResponse() : textResponse("done"),
+    };
+
+    const stats = await runTurn(deps, "run ls");
+
+    // Bash was called → its schema is now active for subsequent requests.
+    expect(registry.schemas().map((s) => s.name)).toContain("Bash");
+    expect(
+      stats.notes.some((n) => n.includes("activated tool schema: Bash")),
+    ).toBe(true);
+  });
+
   it("rejects a disabled tool without consulting the permission gate", async () => {
     const store = SessionStore.create("/fake/cwd", home);
     const registry = createRegistry();

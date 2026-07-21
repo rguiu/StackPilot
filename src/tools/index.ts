@@ -23,12 +23,33 @@ import { ToolInputError, type ToolDef, type ToolResult } from "./types.js";
 export interface Registry {
   defs: readonly ToolDef[];
   todoState: { todos: TodoItem[] };
+  // Schemas shipped to the API: tools that are both ALLOWED and ACTIVE.
   schemas(): { name: string; description: string; input_schema: unknown }[];
   get(name: string): ToolDef | undefined;
+  // Permission universe. null = all tools allowed. A tool outside the allow
+  // set is rejected at dispatch. Set from user config / the TUI toggle.
   setEnabled(names: readonly string[] | null): void;
   isEnabled(name: string): boolean;
   enabledNames(): string[];
+  // Progressive loading. The ACTIVE set is which allowed tools ship a full
+  // schema right now; null = every allowed tool is active (default). Narrowing
+  // it shrinks the cached tool prefix at cold start; tools are re-activated on
+  // first use.
+  setActive(names: readonly string[] | null): void;
+  // Activate one tool (add its schema for subsequent requests). Returns true
+  // when it was allowed, valid, and newly activated — i.e. the schema prefix
+  // will change next request, a deliberate one-time cache write. No-op when
+  // the tool is unknown, disallowed, already active, or all are active.
+  activate(name: string): boolean;
+  // Allowed tools that are NOT yet active — advertised by name in the system
+  // prompt so the model knows they exist before their schema is loaded.
+  deferredTools(): { name: string; description: string }[];
 }
+
+// The exploration core: the tools a session almost always needs first. With
+// progressive loading on, only these ship full schemas at startup; the rest
+// are advertised by name in the system prompt and activated on first use.
+export const CORE_TOOLS: readonly string[] = ["Read", "Grep", "Glob"];
 
 export function unknownToolNames(
   registry: Registry,
@@ -81,14 +102,20 @@ export function createRegistry(
   }
 
   const byName = new Map(defs.map((d) => [d.name, d]));
-  let enabled: ReadonlySet<string> | null = null;
+  let enabled: ReadonlySet<string> | null = null; // allow set (permissions)
+  let active: ReadonlySet<string> | null = null; // active set (shipped schemas)
+
+  const isAllowed = (name: string): boolean =>
+    enabled === null || enabled.has(name);
+  const isActive = (name: string): boolean =>
+    active === null || active.has(name);
 
   const registry: Registry = {
     defs,
     todoState,
     schemas() {
       return defs
-        .filter((d) => enabled === null || enabled.has(d.name))
+        .filter((d) => isAllowed(d.name) && isActive(d.name))
         .map((d) => ({
           name: d.name,
           description: d.description,
@@ -102,12 +129,27 @@ export function createRegistry(
       enabled = names === null ? null : new Set(names);
     },
     isEnabled(name) {
-      return enabled === null ? byName.has(name) : enabled.has(name);
+      return isAllowed(name);
     },
     enabledNames() {
+      return defs.filter((d) => isAllowed(d.name)).map((d) => d.name);
+    },
+    setActive(names) {
+      active = names === null ? null : new Set(names);
+    },
+    activate(name) {
+      if (active === null) return false; // everything already active
+      if (!byName.has(name) || !isAllowed(name) || active.has(name))
+        return false;
+      active = new Set(active).add(name);
+      return true;
+    },
+    deferredTools() {
+      const activeSet = active;
+      if (activeSet === null) return [];
       return defs
-        .filter((d) => enabled === null || enabled.has(d.name))
-        .map((d) => d.name);
+        .filter((d) => isAllowed(d.name) && !activeSet.has(d.name))
+        .map((d) => ({ name: d.name, description: d.description }));
     },
   };
 
