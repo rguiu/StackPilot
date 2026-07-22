@@ -74,15 +74,24 @@ export function discoverSkills(
 ): Map<string, SkillInfo> {
   const map = new Map<string, SkillInfo>();
 
-  const userDir = join(home, ".stackpilot", "skills");
-  for (const s of readSkillsInDir(userDir)) {
-    map.set(s.name, s);
+  // Scanned low-to-high precedence (later wins): borrowed Claude Code skills
+  // (~/.claude/skills) < native StackPilot skills (~/.stackpilot/skills), and
+  // user-level < project-level. This lets us pick up an existing Claude Code
+  // skills setup out of the box while still letting a native or project skill
+  // of the same name override it. statSync follows symlinks, so the symlinked
+  // skill dirs Claude Code commonly uses resolve transparently.
+  const dirs = [
+    join(home, ".claude", "skills"),
+    join(home, ".stackpilot", "skills"),
+  ];
+  if (gitRoot) {
+    dirs.push(join(gitRoot, ".claude", "skills"));
+    dirs.push(join(gitRoot, ".stackpilot", "skills"));
   }
 
-  if (gitRoot) {
-    const projectDir = join(gitRoot, ".stackpilot", "skills");
-    for (const s of readSkillsInDir(projectDir)) {
-      map.set(s.name, s); // project overrides user
+  for (const dir of dirs) {
+    for (const s of readSkillsInDir(dir)) {
+      map.set(s.name, s);
     }
   }
 
