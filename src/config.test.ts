@@ -12,6 +12,7 @@ import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   loadAppConfig,
+  normalizeAnthropicModel,
   resolveBedrockModel,
   resolveConfig,
   saveConfigPatch,
@@ -207,6 +208,42 @@ describe("Bedrock config", () => {
     const cfg = resolveConfig({ ANTHROPIC_API_KEY: "k" }, {}, noHome);
     expect(cfg.provider).toBe("anthropic");
     expect(cfg.baseUrl).toBe("https://api.anthropic.com");
+  });
+
+  it("resolveConfig expands bare alias in direct-Anthropic path", () => {
+    const cfg = resolveConfig(
+      { ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "haiku" },
+      {},
+      noHome,
+    );
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBe("claude-haiku-4-5");
+  });
+
+  it("normalizeAnthropicModel expands bare family aliases", () => {
+    expect(normalizeAnthropicModel("haiku")).toBe("claude-haiku-4-5");
+    expect(normalizeAnthropicModel("Haiku")).toBe("claude-haiku-4-5");
+    expect(normalizeAnthropicModel("sonnet")).toBe("claude-sonnet-4-5");
+    expect(normalizeAnthropicModel("opus")).toBe("claude-opus-4-5");
+  });
+
+  it("normalizeAnthropicModel passes full model IDs through", () => {
+    expect(normalizeAnthropicModel("claude-haiku-4-5")).toBe(
+      "claude-haiku-4-5",
+    );
+    expect(normalizeAnthropicModel("claude-sonnet-4-5-20250929")).toBe(
+      "claude-sonnet-4-5-20250929",
+    );
+    expect(normalizeAnthropicModel("claude-opus-4-5-20251101")).toBe(
+      "claude-opus-4-5-20251101",
+    );
+  });
+
+  it("normalizeAnthropicModel passes unknown models through unchanged", () => {
+    expect(normalizeAnthropicModel("some-custom-model")).toBe(
+      "some-custom-model",
+    );
+    expect(normalizeAnthropicModel("")).toBe("");
   });
 
   it("reads the Bedrock env from ~/.claude/settings.json when shell vars are unset", () => {

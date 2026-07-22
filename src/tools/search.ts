@@ -53,11 +53,11 @@ export const grepTool: ToolDef = {
     },
     required: ["pattern"],
   },
-  execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const path = optionalString(input, "path") ?? ".";
     try {
-      resolveToolPath(cwd, path);
+      resolveToolPath(cwd, path, workspaceRoot);
     } catch (err) {
       return Promise.resolve({
         output: err instanceof Error ? err.message : String(err),
@@ -188,12 +188,12 @@ export const globTool: ToolDef = {
     },
     required: ["pattern"],
   },
-  execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const baseInput = optionalString(input, "path") ?? ".";
     let base: string;
     try {
-      base = resolveToolPath(cwd, baseInput);
+      base = resolveToolPath(cwd, baseInput, workspaceRoot);
     } catch (err) {
       return Promise.resolve({
         output: err instanceof Error ? err.message : String(err),

@@ -29,8 +29,12 @@ export const readTool: ToolDef = {
     },
     required: ["file_path"],
   },
-  execute(input, cwd): Promise<ToolResult> {
-    const path = resolveToolPath(cwd, requireString(input, "file_path"));
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
+    const path = resolveToolPath(
+      cwd,
+      requireString(input, "file_path"),
+      workspaceRoot,
+    );
     if (input.offset !== undefined) {
       if (typeof input.offset !== "number" || input.offset < 1) {
         return Promise.resolve({
@@ -92,8 +96,12 @@ export const writeTool: ToolDef = {
     },
     required: ["file_path", "content"],
   },
-  execute(input, cwd): Promise<ToolResult> {
-    const path = resolveToolPath(cwd, requireString(input, "file_path"));
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
+    const path = resolveToolPath(
+      cwd,
+      requireString(input, "file_path"),
+      workspaceRoot,
+    );
     const content = input.content;
     if (typeof content !== "string") {
       return Promise.resolve({
@@ -124,8 +132,12 @@ export const editTool: ToolDef = {
     },
     required: ["file_path", "old_string", "new_string"],
   },
-  execute(input, cwd): Promise<ToolResult> {
-    const path = resolveToolPath(cwd, requireString(input, "file_path"));
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
+    const path = resolveToolPath(
+      cwd,
+      requireString(input, "file_path"),
+      workspaceRoot,
+    );
     const oldString = requireString(input, "old_string");
     const newString =
       typeof input.new_string === "string" ? input.new_string : "";

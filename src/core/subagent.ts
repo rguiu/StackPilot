@@ -4,7 +4,7 @@
 
 import { toolUses, accumulateUsage, textOf } from "../util/message.js";
 import type { ContentBlock, ToolResultBlock } from "../types.js";
-import type { Registry } from "../tools/index.js";
+import type { Registry } from "../tools/registry.js";
 import { executeTool } from "../tools/index.js";
 import type {
   MessagesRequest,

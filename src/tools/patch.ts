@@ -149,8 +149,12 @@ export const patchTool: ToolDef = {
     },
     required: ["file_path", "patch"],
   },
-  execute(input, cwd): Promise<ToolResult> {
-    const path = resolveToolPath(cwd, requireString(input, "file_path"));
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
+    const path = resolveToolPath(
+      cwd,
+      requireString(input, "file_path"),
+      workspaceRoot,
+    );
     const patch = requireString(input, "patch");
 
     let original: string;

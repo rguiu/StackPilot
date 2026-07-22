@@ -7,11 +7,7 @@ import { reduce } from "./reducer.js";
 import { runCompact } from "./compact.js";
 import { applyCacheControl, type CacheLedger } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
-import {
-  pageToolResults,
-  deduplicateReadResult,
-  type SessionState,
-} from "./policies.js";
+import { pageToolResults, type SessionState } from "./policies.js";
 import type { ModelPricing } from "../config.js";
 import type {
   MessagesRequest,
@@ -19,8 +15,13 @@ import type {
   TransportConfig,
   UsageInfo,
 } from "../transport/anthropic.js";
-import { executeTool, type Registry } from "../tools/index.js";
+import type { Registry } from "../tools/index.js";
 import { runHook, type HookConfig } from "./hooks.js";
+import {
+  validateToolUse,
+  executeToolWithPolicies,
+  makeToolResult,
+} from "./tool-exec.js";
 import { toolUses, accumulateUsage } from "../util/message.js";
 import type { ToolUseBlock, ContentBlock } from "../types.js";
 import type { ToolResultBlock } from "../types.js";
@@ -335,97 +336,71 @@ async function dispatchTool(
   stats: TurnStats,
 ): Promise<ToolResultBlock> {
   const { registry, io, store } = deps;
-  const input = use.input;
-  const def = registry.get(use.name);
-  stats.toolCalls++;
+  const validation = validateToolUse(registry, use.name, stats);
 
-  let output = "";
-  let isError = false;
-
-  if (!def) {
-    output = `unknown tool: ${use.name}`;
-    isError = true;
-  } else if (!registry.isEnabled(use.name)) {
-    output = `tool disabled for this session: ${use.name}`;
-    isError = true;
-  } else {
-    // Progressive tool loading: the model called an allowed-but-deferred tool
-    // (advertised by name in the system prompt, schema not yet shipped).
-    // Activate it so its full schema joins the prefix on the next request —
-    // one deliberate cache write, then cached thereafter. The current call
-    // still executes normally; inputs are validated in executeTool.
-    if (registry.activate(use.name)) {
-      stats.notes.push(`activated tool schema: ${use.name}`);
-    }
+  if (!validation.valid) {
+    return makeToolResult(use.id, validation.output, true);
   }
-  if (!isError && def && !def.runPermitless) {
-    const perm = await io.permit(use.name, input);
+
+  const def = validation.def;
+
+  if (!def.runPermitless) {
+    const perm = await io.permit(use.name, use.input);
     if (!perm.allowed) {
-      output = perm.reason
+      const output = perm.reason
         ? `user denied permission for this tool call: ${perm.reason}`
         : "user denied permission for this tool call";
-      isError = true;
+      return makeToolResult(use.id, output, true);
     }
   }
 
-  if (!isError && def) {
-    const sessionId = store.sessionId;
-    const cwd = deps.cwd;
-    const preResults = await runHook(
-      "pre_tool",
-      deps.hooks?.preTool,
-      sessionId,
-      cwd,
-      use.name,
-      input,
-    );
-    if (preResults) {
-      for (const r of preResults) {
-        if (r.stdout) {
-          stats.hookReminders.push(
-            `<system-reminder>\n${r.stdout}\n</system-reminder>`,
-          );
-        }
-      }
-    }
-
-    io.onToolStart(use.name, input);
-    const result = await executeTool(def, input, deps.cwd);
-    output = result.output;
-    isError = result.isError === true;
-
-    if (use.name === "Read" && !isError && deps.sessionState) {
-      const filePath = input.file_path as string;
-      if (filePath && typeof output === "string") {
-        output = deduplicateReadResult(filePath, output, deps.sessionState);
-      }
-    }
-
-    io.onToolEnd(use.name, output, isError);
-
-    const postResults = await runHook(
-      "post_tool",
-      deps.hooks?.postTool,
-      sessionId,
-      cwd,
-      use.name,
-      input,
-    );
-    if (postResults) {
-      for (const r of postResults) {
-        if (r.stdout) {
-          stats.hookReminders.push(
-            `<system-reminder>\n${r.stdout}\n</system-reminder>`,
-          );
-        }
+  const sessionId = store.sessionId;
+  const cwd = deps.cwd;
+  const preResults = await runHook(
+    "pre_tool",
+    deps.hooks?.preTool,
+    sessionId,
+    cwd,
+    use.name,
+    use.input,
+  );
+  if (preResults) {
+    for (const r of preResults) {
+      if (r.stdout) {
+        stats.hookReminders.push(
+          `<system-reminder>\n${r.stdout}\n</system-reminder>`,
+        );
       }
     }
   }
 
-  return {
-    type: "tool_result",
-    tool_use_id: use.id,
-    content: output,
-    ...(isError ? { is_error: true } : {}),
-  };
+  io.onToolStart(use.name, use.input);
+  const { output, isError } = await executeToolWithPolicies(
+    def,
+    use.input,
+    cwd,
+    deps.sessionState,
+    deps.registry.workspaceRoot,
+  );
+  io.onToolEnd(use.name, output, isError);
+
+  const postResults = await runHook(
+    "post_tool",
+    deps.hooks?.postTool,
+    sessionId,
+    cwd,
+    use.name,
+    use.input,
+  );
+  if (postResults) {
+    for (const r of postResults) {
+      if (r.stdout) {
+        stats.hookReminders.push(
+          `<system-reminder>\n${r.stdout}\n</system-reminder>`,
+        );
+      }
+    }
+  }
+
+  return makeToolResult(use.id, output, isError);
 }

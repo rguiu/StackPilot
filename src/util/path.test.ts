@@ -1,15 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  absPath,
-  getWorkspaceRoot,
-  resolveToolPath,
-  setWorkspaceRoot,
-} from "./path.js";
+import { describe, expect, it } from "vitest";
+import { absPath, resolveToolPath } from "./path.js";
 import { ToolInputError } from "../tools/types.js";
-
-afterEach(() => {
-  setWorkspaceRoot(null); // never leak the boundary between tests
-});
 
 describe("absPath", () => {
   it("returns absolute paths unchanged", () => {
@@ -22,47 +13,41 @@ describe("absPath", () => {
 
 describe("workspace confinement (off by default)", () => {
   it("allows any path when no root is set", () => {
-    expect(getWorkspaceRoot()).toBeNull();
-    expect(resolveToolPath("/proj", "/etc/passwd")).toBe("/etc/passwd");
+    expect(resolveToolPath("/proj", "/etc/passwd", undefined)).toBe(
+      "/etc/passwd",
+    );
   });
 });
 
 describe("workspace confinement (enabled)", () => {
+  const root = "/proj";
+
   it("allows paths inside the root", () => {
-    setWorkspaceRoot("/proj");
-    expect(resolveToolPath("/proj", "src/a.ts")).toBe("/proj/src/a.ts");
-    expect(resolveToolPath("/proj", "/proj/deep/b.ts")).toBe("/proj/deep/b.ts");
+    expect(resolveToolPath("/proj", "src/a.ts", root)).toBe("/proj/src/a.ts");
+    expect(resolveToolPath("/proj", "/proj/deep/b.ts", root)).toBe(
+      "/proj/deep/b.ts",
+    );
   });
 
   it("allows the root itself", () => {
-    setWorkspaceRoot("/proj");
-    expect(resolveToolPath("/proj", ".")).toBe("/proj");
+    expect(resolveToolPath("/proj", ".", root)).toBe("/proj");
   });
 
   it("rejects an absolute path outside the root", () => {
-    setWorkspaceRoot("/proj");
-    expect(() => resolveToolPath("/proj", "/etc/passwd")).toThrow(
+    expect(() => resolveToolPath("/proj", "/etc/passwd", root)).toThrow(
       ToolInputError,
     );
   });
 
   it("rejects a ../ traversal that escapes the root", () => {
-    setWorkspaceRoot("/proj");
-    expect(() => resolveToolPath("/proj", "../secrets/key")).toThrow(
+    expect(() => resolveToolPath("/proj", "../secrets/key", root)).toThrow(
       ToolInputError,
     );
   });
 
   it("rejects a sibling directory sharing a name prefix", () => {
-    // /project-evil must NOT count as inside /project
-    setWorkspaceRoot("/project");
-    expect(() => resolveToolPath("/", "/project-evil/x")).toThrow(
+    expect(() => resolveToolPath("/", "/project-evil/x", "/project")).toThrow(
       ToolInputError,
     );
-  });
-
-  it("normalizes the root", () => {
-    setWorkspaceRoot("/proj/./sub/..");
-    expect(getWorkspaceRoot()).toBe("/proj");
   });
 });

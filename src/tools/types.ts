@@ -11,7 +11,11 @@ export interface ToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
   runPermitless: boolean;
-  execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult>;
+  execute(
+    input: Record<string, unknown>,
+    cwd: string,
+    workspaceRoot?: string,
+  ): Promise<ToolResult>;
 }
 
 export class ToolInputError extends Error {}
