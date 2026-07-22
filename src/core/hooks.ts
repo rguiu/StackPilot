@@ -74,8 +74,12 @@ async function runOne(
     );
 
     if (child.stdin) {
-      child.stdin.write(JSON.stringify(ctx));
-      child.stdin.end();
+      try {
+        child.stdin.write(JSON.stringify(ctx));
+        child.stdin.end();
+      } catch {
+        // child exited before stdin could be written, ignore
+      }
     }
   });
 }
