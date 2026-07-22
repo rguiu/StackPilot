@@ -74,12 +74,11 @@ async function runOne(
     );
 
     if (child.stdin) {
-      try {
-        child.stdin.write(JSON.stringify(ctx));
-        child.stdin.end();
-      } catch {
-        // child exited before stdin could be written, ignore
-      }
+      child.stdin.on("error", (e) => {
+        if ((e as NodeJS.ErrnoException).code !== "EPIPE") throw e;
+      });
+      child.stdin.write(JSON.stringify(ctx));
+      child.stdin.end();
     }
   });
 }
