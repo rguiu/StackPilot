@@ -62,8 +62,11 @@ export function parseArgs(argv: string[]): CliArgs {
   while (rest.length > 0) {
     const a = rest.shift() as string;
     if (a === "-p" || a === "--print") {
-      const val = rest.shift();
-      if (val !== undefined) args.prompt = val;
+      const val = rest[0];
+      if (val !== undefined && !val.startsWith("-")) {
+        rest.shift();
+        args.prompt = val;
+      }
     } else if (a === "-c" || a === "--continue") {
       args.continue_ = true;
     } else if (a === "--yolo") {
@@ -79,6 +82,9 @@ export function parseArgs(argv: string[]): CliArgs {
       args.json = true;
     } else if (a === "-v" || a === "--version") {
       args.version = true;
+    } else if (!a.startsWith("-")) {
+      args.prompt = [a, ...rest].join(" ");
+      rest.length = 0;
     } else {
       console.error(`unknown argument: ${a}`);
       process.exit(2);
