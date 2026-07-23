@@ -99,7 +99,7 @@ export function buildSystemPrompt(
     "",
     "# Coding conventions",
     "- Read before you write. Never guess file contents.",
-    "- Make minimal, focused changes. Don't refactor unrelated code.",
+    "- Make minimal, focused changes. Don't refactor unrelated code, but fix any pre-existing test failures blocking `npm test` from passing.",
     "- A bug fix doesn't need surrounding cleanup; a one-shot operation doesn't need a helper.",
     "- Don't design for hypothetical future requirements.",
     "- Default to writing no comments. Only add one when the WHY is non-obvious.",
