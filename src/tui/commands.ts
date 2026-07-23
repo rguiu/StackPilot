@@ -21,6 +21,7 @@ import type { TransportConfig } from "../transport/anthropic.js";
 import type { ModelPricing } from "../config.js";
 import type { HookConfig } from "../core/hooks.js";
 import type { TurnStats } from "../core/loop.js";
+import { modeLine, nextMode, parseMode, type ModeState } from "../core/mode.js";
 
 export interface CommandContext {
   store: SessionStore;
@@ -38,6 +39,7 @@ export interface CommandContext {
   };
   turns: TurnStats[];
   autoCompactState: { value: number };
+  mode: ModeState;
   startSpinner: (label: string) => void;
   stopSpinner: () => void;
 }
@@ -209,6 +211,13 @@ export function handleSlashCommand(
     process.stdout.write(usageSummary(ctx.turns) + "\n");
   else if (line === "/compact") void doCompact("manual", ctx);
   else if (line === "/config") void doConfig(ctx);
-  else process.stdout.write(dim(`unknown command: ${line} (try /help)`) + "\n");
+  else if (line === "/mode" || line.startsWith("/mode ")) {
+    const arg = line.slice("/mode".length).trim();
+    ctx.mode.current = arg
+      ? (parseMode(arg) ?? ctx.mode.current)
+      : nextMode(ctx.mode.current);
+    process.stdout.write(modeLine(ctx.mode.current) + "\n");
+  } else
+    process.stdout.write(dim(`unknown command: ${line} (try /help)`) + "\n");
   return "handled";
 }

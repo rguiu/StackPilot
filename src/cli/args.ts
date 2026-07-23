@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+import { parseMode, type SessionMode } from "../core/mode.js";
 
 export interface CliArgs {
   prompt?: string;
@@ -12,6 +13,7 @@ export interface CliArgs {
   tools?: string[];
   json: boolean;
   version: boolean;
+  mode?: SessionMode;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -41,6 +43,14 @@ export function parseArgs(argv: string[]): CliArgs {
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
+    } else if (a === "--mode") {
+      const raw = rest.shift() ?? "";
+      const parsed = parseMode(raw);
+      if (!parsed) {
+        console.error(`unknown mode: ${raw} (valid: build, plan)`);
+        process.exit(2);
+      }
+      args.mode = parsed;
     } else if (a === "--json") {
       args.json = true;
     } else if (a === "-v" || a === "--version") {

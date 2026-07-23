@@ -6,8 +6,14 @@ import process from "node:process";
 import { execShellPassthrough } from "../util/shell-exec.js";
 import { SPINNER_FRAMES, cyan, dim } from "./ansi.js";
 import { MarkdownRenderer } from "./markdown.js";
-import { InterruptController, isAbort } from "./interrupt.js";
+import { InterruptController, ModeController, isAbort } from "./interrupt.js";
 import { handleSlashCommand, type CommandContext } from "./commands.js";
+import {
+  createModeState,
+  modeLine,
+  nextMode,
+  type ModeState,
+} from "../core/mode.js";
 import {
   interrupted,
   permissionLabel,
@@ -53,6 +59,7 @@ export interface AppDeps {
   maxToolResultChars?: number;
   // Idle gap (ms) before a turn that triggers a cache keep-alive. 0 disables.
   cachePrewarmIdleMs?: number;
+  mode?: ModeState;
 }
 
 export async function runApp(deps: AppDeps): Promise<void> {
@@ -61,6 +68,17 @@ export async function runApp(deps: AppDeps): Promise<void> {
   const autoCompactState = { value: deps.autoCompactAtTokens ?? 0 };
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const interrupt = new InterruptController();
+  const mode: ModeState = deps.mode ?? createModeState();
+  const promptStr = `${cyan("›")} `;
+  const modeCtl = new ModeController(() => {
+    mode.current = nextMode(mode.current);
+    // Clear the current input line, print the updated mode indicator, then
+    // redraw the prompt with whatever the user had already typed.
+    const typed = rl.line;
+    process.stdout.write(
+      `\r\x1b[K${modeLine(mode.current)}\n\r\x1b[K${promptStr}${typed}`,
+    );
+  });
   const turns: TurnStats[] = [];
   const sessionAllow = new Set<string>();
   const ledger = new CacheLedger();
@@ -170,6 +188,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
       : undefined,
     turns,
     autoCompactState,
+    mode,
     startSpinner,
     stopSpinner,
   };
@@ -180,7 +199,9 @@ export async function runApp(deps: AppDeps): Promise<void> {
     [
       `${cyan("stackpilot")} ${dim("·")} ${config.model} ${dim("·")} session ${store.sessionId.slice(0, 8)}`,
       dim(`cwd ${deps.cwd}${costStr}`),
-      dim("esc interrupts · ! for shell · /help for commands"),
+      dim(
+        "esc interrupts · tab switches mode · ! for shell · /help for commands",
+      ),
       "",
     ].join("\n"),
   );
@@ -194,11 +215,15 @@ export async function runApp(deps: AppDeps): Promise<void> {
         process.stdout.write("\n");
       }
 
+      process.stdout.write(modeLine(mode.current) + "\n");
       let line: string;
+      modeCtl.arm();
       try {
-        line = (await rl.question(`${cyan("›")} `)).trim();
+        line = (await rl.question(promptStr)).trim();
       } catch {
         break;
+      } finally {
+        modeCtl.disarm();
       }
       if (line === "") continue;
 
@@ -233,6 +258,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
         sessionState: deps.sessionState,
         maxToolResultChars: deps.maxToolResultChars,
         autoCompactAtTokens: autoCompactState.value,
+        mode,
       };
       // The user was idle long enough that the cached prefix may have expired;
       // refresh it before the real request re-writes the whole prefix.
@@ -273,6 +299,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
     );
   } finally {
     interrupt.disarm();
+    modeCtl.dispose();
     rl.close();
     process.stdout.write("\x1b[?25h");
   }

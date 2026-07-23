@@ -25,6 +25,7 @@ import {
 import { toolUses, accumulateUsage } from "../util/message.js";
 import type { ToolUseBlock, ContentBlock } from "../types.js";
 import type { ToolResultBlock } from "../types.js";
+import { modeReminder, type ModeState } from "./mode.js";
 
 export interface TurnIO {
   onText(delta: string): void;
@@ -58,6 +59,10 @@ export interface TurnDeps {
   signal?: AbortSignal;
   // Shared mutable state for context policies (paging, dedup, eviction).
   sessionState?: SessionState;
+  // Session operating mode (build/plan). In plan mode, write tools are refused
+  // in dispatchTool. Read by reference so a Tab press between turns applies to
+  // the next turn.
+  mode?: ModeState;
   // Max chars per tool_result before paging kicks in. 0 = no paging.
   maxToolResultChars?: number;
   // Hook configs keyed by point ("pre-tool" / "post-tool"). Undefined hooks
@@ -145,10 +150,17 @@ export async function runTurn(
   let priceIncomplete = false;
 
   let leaf = reduce(store.all()).leafUuid;
+  const reminder = deps.mode ? modeReminder(deps.mode.current) : null;
+  const userContent = reminder
+    ? [
+        { type: "text" as const, text: reminder },
+        { type: "text" as const, text: userText },
+      ]
+    : [{ type: "text" as const, text: userText }];
   const userEvent = store.append({
     type: "user",
     parentUuid: leaf,
-    message: { role: "user", content: [{ type: "text", text: userText }] },
+    message: { role: "user", content: userContent },
   });
   if (!userEvent.uuid) throw new Error("store.append returned no uuid");
   leaf = userEvent.uuid;
@@ -415,6 +427,14 @@ async function dispatchTool(
   }
 
   const def = validation.def;
+
+  if (deps.mode?.current === "plan" && !def.runPermitless) {
+    return makeToolResult(
+      use.id,
+      `blocked: Plan mode is read-only, so ${use.name} cannot run. Present your plan; switch to Build (tab) to apply changes.`,
+      true,
+    );
+  }
 
   if (!def.runPermitless) {
     const perm = await io.permit(use.name, use.input);

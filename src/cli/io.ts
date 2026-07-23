@@ -18,6 +18,7 @@ import type { TransportConfig } from "../transport/anthropic.js";
 import type { SessionState } from "../core/policies.js";
 import type { SessionStore } from "../session/store.js";
 import type { ModelPricing } from "../config.js";
+import type { ModeState } from "../core/mode.js";
 
 export interface RunDeps {
   cwd: string;
@@ -36,6 +37,7 @@ export interface RunDeps {
   autoCompactAtTokens: number;
   // Idle gap (ms) before a REPL turn that triggers a cache keep-alive. 0 off.
   cachePrewarmIdleMs: number;
+  mode: ModeState;
 }
 
 export function makeIO(
