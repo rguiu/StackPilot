@@ -59,6 +59,7 @@ export interface AppDeps {
   maxToolResultChars?: number;
   // Idle gap (ms) before a turn that triggers a cache keep-alive. 0 disables.
   cachePrewarmIdleMs?: number;
+  maxIterations?: number;
   mode?: ModeState;
 }
 
@@ -258,6 +259,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
         sessionState: deps.sessionState,
         maxToolResultChars: deps.maxToolResultChars,
         autoCompactAtTokens: autoCompactState.value,
+        maxIterations: deps.maxIterations,
         mode,
       };
       // The user was idle long enough that the cached prefix may have expired;

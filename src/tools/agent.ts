@@ -24,6 +24,7 @@ export interface AgentState {
   cwd?: string;
   sessionState?: SessionState;
   maxToolResultChars?: number;
+  subagentMaxIterations?: number;
 }
 
 export function createAgentTool(state: AgentState): ToolDef {
@@ -86,6 +87,7 @@ export function createAgentTool(state: AgentState): ToolDef {
         state.cwd ?? process.cwd(),
         state.sessionState,
         state.maxToolResultChars,
+        state.subagentMaxIterations,
       );
 
       const usage =

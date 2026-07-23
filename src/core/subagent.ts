@@ -37,8 +37,6 @@ export interface SubagentResult {
   abort: string | null;
 }
 
-const MAX_ITERATIONS = 10;
-
 const EXPLORE_SYSTEM = [
   "You are a subagent for stackpilot, specialized in codebase exploration.",
   "Your task: answer the user's question by reading and searching the code.",
@@ -91,6 +89,10 @@ export async function runSubagent(
   cwd: string,
   sessionState?: SessionState,
   maxToolResultChars?: number,
+  // Maximum iterations for the subagent loop. Falls back to
+  // the caller-provided default. TODO: evaluate real-world subagent
+  // session lengths to pick a better default than the current 80.
+  maxIterations?: number,
 ): Promise<SubagentResult> {
   const subConfig = sub.model ? { ...config, model: sub.model } : config;
   const system =
@@ -110,7 +112,8 @@ export async function runSubagent(
   let toolCalls = 0;
   let abort: string | null = null;
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  const maxIter = maxIterations ?? 10;
+  for (let i = 0; i < maxIter; i++) {
     let view = messages;
     if (sessionState) {
       if (maxToolResultChars && maxToolResultChars > 0) {

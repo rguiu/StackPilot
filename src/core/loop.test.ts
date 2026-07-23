@@ -61,6 +61,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry: createRegistry(),
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => Promise.reject(abortError())),
       stream: async () => toolUseResponse(),
     };
@@ -92,6 +93,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry: createRegistry(),
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => Promise.resolve({ allowed: false })), // deny → still produces a result
       stream: async () =>
         call++ === 0 ? toolUseResponse() : textResponse("done"),
@@ -129,6 +131,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry,
       config,
       system: "test",
+      maxIterations: 5,
       autoCompactAtTokens: 1000,
       io: silentIO(() => Promise.resolve({ allowed: false })),
       stream: async () => {
@@ -174,6 +177,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry,
       config,
       system: "test",
+      maxIterations: 5,
       autoCompactAtTokens: 1_000_000,
       io: silentIO(() => Promise.resolve({ allowed: false })),
       stream: async () => {
@@ -214,6 +218,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry,
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => Promise.resolve({ allowed: false })), // deny → no shell run
       stream: async () =>
         call++ === 0 ? toolUseResponse() : textResponse("done"),
@@ -243,6 +248,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry,
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => Promise.resolve({ allowed: false })),
       stream: async () => {
         if (call++ === 0) {
@@ -312,6 +318,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry: createRegistry(),
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => Promise.resolve({ allowed: false })),
       stream: async (cfg) => {
         calls++;
@@ -343,6 +350,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry: createRegistry(),
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => Promise.resolve({ allowed: false })),
       stream: async () => {
         throw new Error("network down");
@@ -364,6 +372,7 @@ describe("runTurn tool_use/tool_result invariant", () => {
       registry,
       config,
       system: "test",
+      maxIterations: 5,
       io: silentIO(() => {
         permitCalled = true;
         return Promise.resolve({ allowed: true });

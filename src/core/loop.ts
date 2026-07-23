@@ -82,6 +82,9 @@ export interface TurnDeps {
   // not just the TUI. Compaction is a pure append to the cached prefix, so
   // the summary itself bills at cache-read rates.
   autoCompactAtTokens?: number;
+  // Maximum tool-use iterations per turn. Defaults to DEFAULT_MAX_ITERATIONS
+  // (200) from config/types if not set. Guards against unbounded loops.
+  maxIterations?: number;
   // Notified when an auto-compaction runs mid-turn, so the UI can surface it.
   onCompact?: (info: {
     totalMessages: number;
@@ -112,8 +115,6 @@ export interface TurnStats {
   lastRequestInputTokens: number;
   hookReminders: string[];
 }
-
-const MAX_ITERATIONS = 40;
 
 function withReminders(
   results: ToolResultBlock[],
@@ -165,7 +166,8 @@ export async function runTurn(
   if (!userEvent.uuid) throw new Error("store.append returned no uuid");
   leaf = userEvent.uuid;
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  const maxIter = deps.maxIterations ?? 40;
+  for (let i = 0; i < maxIter; i++) {
     const request = buildRequest(deps);
     deps.ledger?.beforeRequest(request);
     stats.requests++;
@@ -284,10 +286,8 @@ export async function runTurn(
     // reduces from it, shrinking the API-visible history.
     leaf = await maybeCompact(deps, stats, leaf);
 
-    if (i === MAX_ITERATIONS - 1) {
-      stats.notes.push(
-        `reached max iterations (${MAX_ITERATIONS}) — turn truncated`,
-      );
+    if (i === maxIter - 1) {
+      stats.notes.push(`reached max iterations (${maxIter}) — turn truncated`);
     }
   }
 

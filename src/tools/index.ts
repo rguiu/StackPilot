@@ -53,6 +53,7 @@ export function createRegistry(
     cwd?: string;
     maxToolResultChars?: number;
     workspaceRoot?: string;
+    subagentMaxIterations?: number;
   },
 ): Registry {
   const todoState = { todos: [] as TodoItem[] };
@@ -141,6 +142,7 @@ export function createRegistry(
       cwd: agentCfg.cwd,
       sessionState,
       maxToolResultChars: agentCfg.maxToolResultChars,
+      subagentMaxIterations: agentCfg.subagentMaxIterations,
     });
     defs.push(agentTool);
     byName.set("Agent", agentTool);

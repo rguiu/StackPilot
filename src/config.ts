@@ -2,8 +2,10 @@ export {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   DEFAULT_CACHE_PREWARM_IDLE_MS,
+  DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TOOL_RESULT_CHARS,
   DEFAULT_MODEL,
+  DEFAULT_SUBAGENT_MAX_ITERATIONS,
   type AppConfig,
   type ModelPricing,
 } from "./config/types.js";

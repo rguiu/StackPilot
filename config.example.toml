@@ -37,6 +37,14 @@ autoCompactAtTokens = 160000
 # (4 min — just under the typical TTL).
 # cachePrewarmIdleMs = 240000
 
+# Maximum tool-use iterations per turn in the main loop. Guards against
+# unbounded loops. Tune up for complex multi-objective tasks.
+# maxIterations = 200
+
+# Maximum iterations for read-only subagent exploration sessions.
+# Subagents are cheaper per-turn but should still be bounded.
+# subagentMaxIterations = 80
+
 # Retry behaviour for transient failures (5xx, 429, network errors).
 # Exponential backoff with jitter. Set maxRetries = 0 to disable.
 # [retry]

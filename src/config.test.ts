@@ -12,6 +12,8 @@ import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   DEFAULT_CACHE_PREWARM_IDLE_MS,
+  DEFAULT_MAX_ITERATIONS,
+  DEFAULT_SUBAGENT_MAX_ITERATIONS,
   loadAppConfig,
   normalizeAnthropicModel,
   resolveBedrockModel,
@@ -106,6 +108,36 @@ describe("loadAppConfig", () => {
 
     writeFileSync(join(dir, "prewarm-neg.toml"), "cachePrewarmIdleMs = -1\n");
     expect(() => loadAppConfig(env("prewarm-neg.toml"))).toThrow(ConfigError);
+  });
+
+  it("defaults maxIterations to 200", () => {
+    const cfg = loadAppConfig(env("missing.toml"));
+    expect(cfg.maxIterations).toBe(DEFAULT_MAX_ITERATIONS);
+  });
+
+  it("defaults subagentMaxIterations to 80", () => {
+    const cfg = loadAppConfig(env("missing.toml"));
+    expect(cfg.subagentMaxIterations).toBe(DEFAULT_SUBAGENT_MAX_ITERATIONS);
+  });
+
+  it("overrides maxIterations and subagentMaxIterations from TOML", () => {
+    writeFileSync(
+      join(dir, "iters.toml"),
+      "maxIterations = 300\nsubagentMaxIterations = 120\n",
+    );
+    const cfg = loadAppConfig(env("iters.toml"));
+    expect(cfg.maxIterations).toBe(300);
+    expect(cfg.subagentMaxIterations).toBe(120);
+  });
+
+  it("rejects negative maxIterations", () => {
+    writeFileSync(join(dir, "max-neg.toml"), "maxIterations = -1");
+    expect(() => loadAppConfig(env("max-neg.toml"))).toThrow(ConfigError);
+  });
+
+  it("rejects negative subagentMaxIterations", () => {
+    writeFileSync(join(dir, "sub-neg.toml"), "subagentMaxIterations = -5");
+    expect(() => loadAppConfig(env("sub-neg.toml"))).toThrow(ConfigError);
   });
 });
 

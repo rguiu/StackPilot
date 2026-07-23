@@ -104,6 +104,7 @@ function setupRegistry(
     cwd: process.cwd(),
     maxToolResultChars: appConfig.maxToolResultChars,
     workspaceRoot,
+    subagentMaxIterations: appConfig.subagentMaxIterations,
   });
 
   const enabledTools = args.tools ?? appConfig.enabledTools;
@@ -188,6 +189,7 @@ async function main(): Promise<void> {
     maxToolResultChars: appConfig.maxToolResultChars,
     autoCompactAtTokens: appConfig.autoCompactAtTokens,
     cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
+    maxIterations: appConfig.maxIterations,
     mode,
   };
 
@@ -269,6 +271,7 @@ async function main(): Promise<void> {
       sessionState,
       maxToolResultChars: appConfig.maxToolResultChars,
       cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
+      maxIterations: appConfig.maxIterations,
       mode,
     });
     await fireSessionEnd();

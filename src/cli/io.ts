@@ -37,6 +37,7 @@ export interface RunDeps {
   autoCompactAtTokens: number;
   // Idle gap (ms) before a REPL turn that triggers a cache keep-alive. 0 off.
   cachePrewarmIdleMs: number;
+  maxIterations?: number;
   mode: ModeState;
 }
 

@@ -9,7 +9,9 @@ import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   DEFAULT_CACHE_PREWARM_IDLE_MS,
+  DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TOOL_RESULT_CHARS,
+  DEFAULT_SUBAGENT_MAX_ITERATIONS,
   type AppConfig,
   type ModelPricing,
 } from "./types.js";
@@ -222,6 +224,24 @@ export function loadAppConfig(
     throw new ConfigError("cachePrewarmIdleMs must be >= 0 (0 disables)");
   }
 
+  const maxIterRaw = file.maxIterations;
+  const maxIterations =
+    maxIterRaw === undefined
+      ? DEFAULT_MAX_ITERATIONS
+      : asFiniteNumber(maxIterRaw, "maxIterations");
+  if (maxIterations < 1) {
+    throw new ConfigError("maxIterations must be >= 1");
+  }
+
+  const subMaxIterRaw = file.subagentMaxIterations;
+  const subagentMaxIterations =
+    subMaxIterRaw === undefined
+      ? DEFAULT_SUBAGENT_MAX_ITERATIONS
+      : asFiniteNumber(subMaxIterRaw, "subagentMaxIterations");
+  if (subagentMaxIterations < 1) {
+    throw new ConfigError("subagentMaxIterations must be >= 1");
+  }
+
   return {
     transport,
     pricing: parsePricing(file.pricing, path),
@@ -232,6 +252,8 @@ export function loadAppConfig(
     confineToWorkspace,
     progressiveTools,
     cachePrewarmIdleMs,
+    maxIterations,
+    subagentMaxIterations,
   };
 }
 
