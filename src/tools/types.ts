@@ -11,7 +11,17 @@ export interface ToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
   runPermitless: boolean;
-  execute(input: Record<string, unknown>, cwd: string): Promise<ToolResult>;
+  // Safe to run concurrently with other parallel-safe tools from the same
+  // assistant turn: no side effects, no shared mutable state, no permission
+  // prompt, no long-lived network/abort concerns. Read-only local tools
+  // (Read/Grep/Glob and friends) set this; everything else runs serially.
+  // Undefined is treated as false — opt in explicitly.
+  parallelSafe?: boolean;
+  execute(
+    input: Record<string, unknown>,
+    cwd: string,
+    workspaceRoot?: string,
+  ): Promise<ToolResult>;
 }
 
 export class ToolInputError extends Error {}

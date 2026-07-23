@@ -19,32 +19,9 @@ import type {
   MessagesRequest,
 } from "../transport/anthropic.js";
 import { ToolInputError, type ToolDef, type ToolResult } from "./types.js";
+import type { Registry } from "./registry.js";
 
-export interface Registry {
-  defs: readonly ToolDef[];
-  todoState: { todos: TodoItem[] };
-  // Schemas shipped to the API: tools that are both ALLOWED and ACTIVE.
-  schemas(): { name: string; description: string; input_schema: unknown }[];
-  get(name: string): ToolDef | undefined;
-  // Permission universe. null = all tools allowed. A tool outside the allow
-  // set is rejected at dispatch. Set from user config / the TUI toggle.
-  setEnabled(names: readonly string[] | null): void;
-  isEnabled(name: string): boolean;
-  enabledNames(): string[];
-  // Progressive loading. The ACTIVE set is which allowed tools ship a full
-  // schema right now; null = every allowed tool is active (default). Narrowing
-  // it shrinks the cached tool prefix at cold start; tools are re-activated on
-  // first use.
-  setActive(names: readonly string[] | null): void;
-  // Activate one tool (add its schema for subsequent requests). Returns true
-  // when it was allowed, valid, and newly activated — i.e. the schema prefix
-  // will change next request, a deliberate one-time cache write. No-op when
-  // the tool is unknown, disallowed, already active, or all are active.
-  activate(name: string): boolean;
-  // Allowed tools that are NOT yet active — advertised by name in the system
-  // prompt so the model knows they exist before their schema is loaded.
-  deferredTools(): { name: string; description: string }[];
-}
+export type { Registry } from "./registry.js";
 
 // The exploration core: the tools a session almost always needs first. With
 // progressive loading on, only these ship full schemas at startup; the rest
@@ -75,6 +52,7 @@ export function createRegistry(
     stream: StreamFn;
     cwd?: string;
     maxToolResultChars?: number;
+    workspaceRoot?: string;
   },
 ): Registry {
   const todoState = { todos: [] as TodoItem[] };
@@ -102,8 +80,9 @@ export function createRegistry(
   }
 
   const byName = new Map(defs.map((d) => [d.name, d]));
-  let enabled: ReadonlySet<string> | null = null; // allow set (permissions)
-  let active: ReadonlySet<string> | null = null; // active set (shipped schemas)
+  let enabled: ReadonlySet<string> | null = null;
+  let active: ReadonlySet<string> | null = null;
+  const workspaceRoot = agentCfg?.workspaceRoot;
 
   const isAllowed = (name: string): boolean =>
     enabled === null || enabled.has(name);
@@ -113,6 +92,7 @@ export function createRegistry(
   const registry: Registry = {
     defs,
     todoState,
+    workspaceRoot,
     schemas() {
       return defs
         .filter((d) => isAllowed(d.name) && isActive(d.name))
@@ -173,9 +153,10 @@ export async function executeTool(
   def: ToolDef,
   input: Record<string, unknown>,
   cwd: string,
+  workspaceRoot?: string,
 ): Promise<ToolResult> {
   try {
-    return await def.execute(input, cwd);
+    return await def.execute(input, cwd, workspaceRoot);
   } catch (err) {
     if (err instanceof ToolInputError) {
       return { output: `invalid input: ${err.message}`, isError: true };

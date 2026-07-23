@@ -2,7 +2,7 @@
 // Subagents run in their own message context using the transport.
 
 import { runSubagent } from "../core/subagent.js";
-import type { Registry } from "./index.js";
+import type { Registry } from "./registry.js";
 import type {
   TransportConfig,
   MessagesRequest,

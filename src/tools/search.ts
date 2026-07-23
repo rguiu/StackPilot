@@ -21,6 +21,7 @@ export const grepTool: ToolDef = {
     "Search file contents with a regex (ripgrep). Supports context lines, " +
     "case-insensitive mode, output modes, and file-type filtering.",
   runPermitless: true,
+  parallelSafe: true,
   inputSchema: {
     type: "object",
     properties: {
@@ -53,11 +54,11 @@ export const grepTool: ToolDef = {
     },
     required: ["pattern"],
   },
-  execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const path = optionalString(input, "path") ?? ".";
     try {
-      resolveToolPath(cwd, path);
+      resolveToolPath(cwd, path, workspaceRoot);
     } catch (err) {
       return Promise.resolve({
         output: err instanceof Error ? err.message : String(err),
@@ -168,6 +169,7 @@ export const globTool: ToolDef = {
     'in docs), or "*.json" (top-level only). Returns sorted relative paths. ' +
     "Skip dirs: .git, node_modules, dist.",
   runPermitless: true,
+  parallelSafe: true,
   inputSchema: {
     type: "object",
     properties: {
@@ -188,12 +190,12 @@ export const globTool: ToolDef = {
     },
     required: ["pattern"],
   },
-  execute(input, cwd): Promise<ToolResult> {
+  execute(input, cwd, workspaceRoot): Promise<ToolResult> {
     const pattern = requireString(input, "pattern");
     const baseInput = optionalString(input, "path") ?? ".";
     let base: string;
     try {
-      base = resolveToolPath(cwd, baseInput);
+      base = resolveToolPath(cwd, baseInput, workspaceRoot);
     } catch (err) {
       return Promise.resolve({
         output: err instanceof Error ? err.message : String(err),

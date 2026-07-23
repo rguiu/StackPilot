@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { readTool, writeTool, editTool } from "./fs.js";
 import { executeTool } from "./index.js";
-import { setWorkspaceRoot } from "../util/path.js";
 
 let tmp: string;
 
@@ -20,26 +19,27 @@ function setup(...files: Record<string, string>[]): string {
 
 afterEach(() => {
   if (tmp) rmSync(tmp, { recursive: true, force: true });
-  setWorkspaceRoot(null);
 });
 
 describe("workspace confinement", () => {
-  // Escapes surface as ToolInputError, which the dispatcher (executeTool)
-  // turns into a clean {isError} result — so exercise the real dispatch path.
   it("Read refuses an out-of-workspace path when confinement is on", async () => {
     const dir = setup();
-    setWorkspaceRoot(dir);
-    const res = await executeTool(readTool, { file_path: "/etc/hosts" }, dir);
+    const res = await executeTool(
+      readTool,
+      { file_path: "/etc/hosts" },
+      dir,
+      dir,
+    );
     expect(res.isError).toBe(true);
     expect(res.output).toContain("outside the workspace");
   });
 
   it("Write refuses a ../ escape when confinement is on", async () => {
     const dir = setup();
-    setWorkspaceRoot(dir);
     const res = await executeTool(
       writeTool,
       { file_path: "../escape.txt", content: "x" },
+      dir,
       dir,
     );
     expect(res.isError).toBe(true);
@@ -48,10 +48,10 @@ describe("workspace confinement", () => {
 
   it("allows in-workspace paths when confinement is on", async () => {
     const dir = setup();
-    setWorkspaceRoot(dir);
     const res = await executeTool(
       writeTool,
       { file_path: "inside.txt", content: "ok" },
+      dir,
       dir,
     );
     expect(res.isError).toBeFalsy();

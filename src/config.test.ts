@@ -11,7 +11,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
+  DEFAULT_CACHE_PREWARM_IDLE_MS,
   loadAppConfig,
+  normalizeAnthropicModel,
   resolveBedrockModel,
   resolveConfig,
   saveConfigPatch,
@@ -91,6 +93,19 @@ describe("loadAppConfig", () => {
   it("rejects a negative threshold", () => {
     writeFileSync(join(dir, "neg.toml"), "autoCompactAtTokens = -1");
     expect(() => loadAppConfig(env("neg.toml"))).toThrow(ConfigError);
+  });
+
+  it("defaults cachePrewarmIdleMs to the disabled value", () => {
+    const cfg = loadAppConfig(env("missing.toml"));
+    expect(cfg.cachePrewarmIdleMs).toBe(DEFAULT_CACHE_PREWARM_IDLE_MS);
+  });
+
+  it("parses cachePrewarmIdleMs and rejects negatives", () => {
+    writeFileSync(join(dir, "prewarm.toml"), "cachePrewarmIdleMs = 240000\n");
+    expect(loadAppConfig(env("prewarm.toml")).cachePrewarmIdleMs).toBe(240000);
+
+    writeFileSync(join(dir, "prewarm-neg.toml"), "cachePrewarmIdleMs = -1\n");
+    expect(() => loadAppConfig(env("prewarm-neg.toml"))).toThrow(ConfigError);
   });
 });
 
@@ -207,6 +222,42 @@ describe("Bedrock config", () => {
     const cfg = resolveConfig({ ANTHROPIC_API_KEY: "k" }, {}, noHome);
     expect(cfg.provider).toBe("anthropic");
     expect(cfg.baseUrl).toBe("https://api.anthropic.com");
+  });
+
+  it("resolveConfig expands bare alias in direct-Anthropic path", () => {
+    const cfg = resolveConfig(
+      { ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "haiku" },
+      {},
+      noHome,
+    );
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBe("claude-haiku-4-5");
+  });
+
+  it("normalizeAnthropicModel expands bare family aliases", () => {
+    expect(normalizeAnthropicModel("haiku")).toBe("claude-haiku-4-5");
+    expect(normalizeAnthropicModel("Haiku")).toBe("claude-haiku-4-5");
+    expect(normalizeAnthropicModel("sonnet")).toBe("claude-sonnet-4-5");
+    expect(normalizeAnthropicModel("opus")).toBe("claude-opus-4-5");
+  });
+
+  it("normalizeAnthropicModel passes full model IDs through", () => {
+    expect(normalizeAnthropicModel("claude-haiku-4-5")).toBe(
+      "claude-haiku-4-5",
+    );
+    expect(normalizeAnthropicModel("claude-sonnet-4-5-20250929")).toBe(
+      "claude-sonnet-4-5-20250929",
+    );
+    expect(normalizeAnthropicModel("claude-opus-4-5-20251101")).toBe(
+      "claude-opus-4-5-20251101",
+    );
+  });
+
+  it("normalizeAnthropicModel passes unknown models through unchanged", () => {
+    expect(normalizeAnthropicModel("some-custom-model")).toBe(
+      "some-custom-model",
+    );
+    expect(normalizeAnthropicModel("")).toBe("");
   });
 
   it("reads the Bedrock env from ~/.claude/settings.json when shell vars are unset", () => {

@@ -2,33 +2,42 @@
 // separator + status line between turns. Esc via InterruptController.
 
 import { createInterface } from "node:readline/promises";
-import { emitKeypressEvents } from "node:readline";
 import process from "node:process";
-import { isCancel, multiselect, select, text } from "@clack/prompts";
+import { execShellPassthrough } from "../util/shell-exec.js";
 import { SPINNER_FRAMES, cyan, dim } from "./ansi.js";
 import { MarkdownRenderer } from "./markdown.js";
+import { InterruptController, ModeController, isAbort } from "./interrupt.js";
+import { handleSlashCommand, type CommandContext } from "./commands.js";
 import {
-  helpText,
+  createModeState,
+  modeLine,
+  nextMode,
+  type ModeState,
+} from "../core/mode.js";
+import {
   interrupted,
   permissionLabel,
   richToolOutput,
   statsLine,
-  todoBox,
   toolStartLine,
-  usageSummary,
 } from "./render.js";
-import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
-import { runCompact } from "../core/compact.js";
+import {
+  runTurn,
+  prewarmCache,
+  type TurnIO,
+  type TurnStats,
+} from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
 import { formatUsd } from "../core/cost.js";
-import { reduce } from "../core/reducer.js";
-import { saveConfigPatch, type ModelPricing } from "../config.js";
 import type { SessionStore } from "../session/store.js";
 import type { Registry } from "../tools/index.js";
 import type { TransportConfig } from "../transport/anthropic.js";
 import { streamWithRetry } from "../transport/anthropic.js";
 import type { HookConfig } from "../core/hooks.js";
 import type { SessionState } from "../core/policies.js";
+import type { ModelPricing } from "../config.js";
+import { select, isCancel, text } from "@clack/prompts";
+import { restoreReadlineTty } from "./interrupt.js";
 
 export interface AppDeps {
   cwd: string;
@@ -48,52 +57,9 @@ export interface AppDeps {
   };
   sessionState?: SessionState;
   maxToolResultChars?: number;
-}
-
-class InterruptController {
-  private controller = new AbortController();
-  private active = false;
-  private readonly onKeypress = (
-    _str: string,
-    key: { name?: string } | undefined,
-  ): void => {
-    if (key?.name === "escape") this.controller.abort();
-  };
-
-  get signal(): AbortSignal {
-    return this.controller.signal;
-  }
-
-  arm(): void {
-    if (this.active) return;
-    this.active = true;
-    emitKeypressEvents(process.stdin);
-    process.stdin.on("keypress", this.onKeypress);
-    process.stdin.resume();
-  }
-
-  disarm(): void {
-    if (!this.active) return;
-    this.active = false;
-    process.stdin.off("keypress", this.onKeypress);
-  }
-
-  reset(): void {
-    this.controller = new AbortController();
-  }
-
-  abort(): void {
-    this.controller.abort();
-  }
-}
-
-function restoreReadlineTty(): void {
-  if (process.stdin.isTTY) process.stdin.setRawMode(true);
-  process.stdin.resume();
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
+  // Idle gap (ms) before a turn that triggers a cache keep-alive. 0 disables.
+  cachePrewarmIdleMs?: number;
+  mode?: ModeState;
 }
 
 export async function runApp(deps: AppDeps): Promise<void> {
@@ -102,11 +68,25 @@ export async function runApp(deps: AppDeps): Promise<void> {
   const autoCompactState = { value: deps.autoCompactAtTokens ?? 0 };
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const interrupt = new InterruptController();
+  const mode: ModeState = deps.mode ?? createModeState();
+  const promptStr = `${cyan("›")} `;
+  const modeCtl = new ModeController(() => {
+    mode.current = nextMode(mode.current);
+    // Clear the current input line, print the updated mode indicator, then
+    // redraw the prompt with whatever the user had already typed.
+    const typed = rl.line;
+    process.stdout.write(
+      `\r\x1b[K${modeLine(mode.current)}\n\r\x1b[K${promptStr}${typed}`,
+    );
+  });
   const turns: TurnStats[] = [];
   const sessionAllow = new Set<string>();
   const ledger = new CacheLedger();
   const md = new MarkdownRenderer();
   let streamedAnything = false;
+  const prewarmIdleMs = deps.cachePrewarmIdleMs ?? 0;
+  // Timestamp of the last completed turn; drives the idle cache keep-alive.
+  let lastTurnEndedAt = Date.now();
 
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;
   let spinnerFrame = 0;
@@ -134,9 +114,6 @@ export async function runApp(deps: AppDeps): Promise<void> {
         streamedAnything = true;
         process.stdout.write("\n");
       }
-      // Feed deltas through the markdown renderer, which emits completed lines
-      // (headings, bold, lists, code blocks) and buffers the partial tail. The
-      // flush() calls on tool boundaries and turn end drain that tail.
       const rendered = md.push(delta);
       if (rendered.length > 0) process.stdout.write(rendered + "\n");
     },
@@ -195,169 +172,42 @@ export async function runApp(deps: AppDeps): Promise<void> {
     },
   };
 
+  const cmdCtx: CommandContext = {
+    store,
+    registry,
+    config,
+    system,
+    pricing,
+    interrupt,
+    stream,
+    hooks: deps.hooks
+      ? {
+          preCompact: deps.hooks.preCompact,
+          postCompact: deps.hooks.postCompact,
+        }
+      : undefined,
+    turns,
+    autoCompactState,
+    mode,
+    startSpinner,
+    stopSpinner,
+  };
+
   const totalCost = turns.reduce((sum, t) => sum + (t.costUsd ?? 0), 0);
   const costStr = pricing ? ` ${formatUsd(totalCost)}` : "";
   process.stdout.write(
     [
       `${cyan("stackpilot")} ${dim("·")} ${config.model} ${dim("·")} session ${store.sessionId.slice(0, 8)}`,
       dim(`cwd ${deps.cwd}${costStr}`),
-      dim("esc interrupts · ! for shell · /help for commands"),
+      dim(
+        "esc interrupts · tab switches mode · ! for shell · /help for commands",
+      ),
       "",
     ].join("\n"),
   );
 
-  async function doCompact(reason: "manual" | "auto"): Promise<void> {
-    interrupt.reset();
-    interrupt.arm();
-    startSpinner("compacting…");
-    try {
-      const res = await runCompact({
-        store,
-        registry,
-        config,
-        system,
-        pricing,
-        signal: interrupt.signal,
-        stream,
-        hooks: deps.hooks
-          ? {
-              preCompact: deps.hooks.preCompact,
-              postCompact: deps.hooks.postCompact,
-            }
-          : undefined,
-      });
-      stopSpinner();
-      if (!res) {
-        process.stdout.write(dim("nothing to compact") + "\n");
-        return;
-      }
-      const cost = res.costUsd !== null ? ` · ${formatUsd(res.costUsd)}` : "";
-      process.stdout.write(
-        dim(
-          `✂ compacted (${reason}): ${res.totalMessages} messages → ${res.summaryChars}-char summary${cost}`,
-        ) + "\n",
-      );
-    } catch (err) {
-      stopSpinner();
-      if (isAbort(err)) {
-        process.stdout.write("\n" + interrupted() + "\n");
-        return;
-      }
-      throw err;
-    } finally {
-      interrupt.disarm();
-    }
-  }
-
-  async function doConfig(): Promise<void> {
-    try {
-      const what = await select({
-        message: "Configure what?",
-        options: [
-          {
-            value: "tools",
-            label: `Tools (${registry.enabledNames().length}/${registry.defs.length} enabled)`,
-          },
-          {
-            value: "compact",
-            label: `Auto-compact threshold (${autoCompactState.value === 0 ? "off" : autoCompactState.value})`,
-          },
-        ],
-      });
-      if (isCancel(what)) return;
-      if (what === "tools") await configTools();
-      else await configThreshold();
-    } finally {
-      restoreReadlineTty();
-    }
-  }
-
-  async function configTools(): Promise<void> {
-    const chosen = await multiselect({
-      message:
-        "Tools sent to the model (schema presence — part of the cache prefix)",
-      options: registry.defs.map((d) => ({
-        value: d.name,
-        label: d.name,
-        hint: d.runPermitless ? "no prompt" : "asks permission",
-      })),
-      initialValues: registry.enabledNames(),
-      required: false,
-    });
-    if (isCancel(chosen)) return;
-    const names = chosen;
-    const requestsSent = turns.some((t) => t.requests > 0);
-
-    if (!requestsSent) {
-      const scope = await select({
-        message: "Apply how?",
-        options: [
-          { value: "session", label: "This session only" },
-          { value: "permanent", label: "Permanently (save to config file)" },
-        ],
-      });
-      if (isCancel(scope)) return;
-      registry.setEnabled(names);
-      store.append({
-        type: "config",
-        parentUuid: reduce(store.all()).leafUuid,
-        meta: { tools: names },
-      });
-      if (scope === "permanent") {
-        const path = saveConfigPatch({ enabledTools: names }, process.env);
-        process.stdout.write(dim(`saved to ${path}`) + "\n");
-      }
-      process.stdout.write(
-        dim(`tools enabled: ${names.join(", ") || "(none)"}`) + "\n",
-      );
-    } else {
-      const scope = await select({
-        message: "Prefix already established — tool changes apply next session",
-        options: [
-          { value: "permanent", label: "Save as default for future sessions" },
-          { value: "cancel", label: "Cancel" },
-        ],
-      });
-      if (isCancel(scope) || scope === "cancel") return;
-      const path = saveConfigPatch({ enabledTools: names }, process.env);
-      process.stdout.write(
-        dim(`saved to ${path} — takes effect next session`) + "\n",
-      );
-    }
-  }
-
-  async function configThreshold(): Promise<void> {
-    const raw = await text({
-      message: "Auto-compact when last request input exceeds (tokens, 0 = off)",
-      initialValue: String(autoCompactState.value),
-      validate: (v) =>
-        /^\d+$/.test((v ?? "").trim())
-          ? undefined
-          : "enter a non-negative integer",
-    });
-    if (isCancel(raw)) return;
-    const value = parseInt(raw.trim(), 10);
-    const scope = await select({
-      message: "Apply how?",
-      options: [
-        { value: "session", label: "This session only (applies immediately)" },
-        { value: "permanent", label: "Permanently (save + apply now)" },
-      ],
-    });
-    if (isCancel(scope)) return;
-    autoCompactState.value = value;
-    if (scope === "permanent") {
-      const path = saveConfigPatch({ autoCompactAtTokens: value }, process.env);
-      process.stdout.write(dim(`saved to ${path}`) + "\n");
-    }
-    process.stdout.write(
-      dim(`auto-compact: ${value === 0 ? "off" : `at ${value} tokens`}`) + "\n",
-    );
-  }
-
   try {
     for (;;) {
-      // Bottom-bar: separator + status before each prompt
       if (turns.length > 0) {
         const last = turns[turns.length - 1];
         if (last) process.stdout.write("\n");
@@ -365,56 +215,27 @@ export async function runApp(deps: AppDeps): Promise<void> {
         process.stdout.write("\n");
       }
 
+      process.stdout.write(modeLine(mode.current) + "\n");
       let line: string;
+      modeCtl.arm();
       try {
-        line = (await rl.question(`${cyan("›")} `)).trim();
+        line = (await rl.question(promptStr)).trim();
       } catch {
         break;
+      } finally {
+        modeCtl.disarm();
       }
       if (line === "") continue;
 
       if (line.startsWith("!")) {
         const cmd = line.slice(1).trim();
-        if (cmd) {
-          const { execFileSync } = await import("node:child_process");
-          try {
-            const output = execFileSync("bash", ["-c", cmd], {
-              cwd: deps.cwd,
-              encoding: "utf8",
-              maxBuffer: 1 * 1024 * 1024,
-              timeout: 30_000,
-            });
-            process.stdout.write(output.trimEnd() + "\n");
-          } catch (err: unknown) {
-            const e = err as {
-              stdout?: string;
-              stderr?: string;
-              message?: string;
-            };
-            if (typeof e.stdout === "string" && e.stdout.trim())
-              process.stdout.write(e.stdout.trim() + "\n");
-            if (typeof e.stderr === "string" && e.stderr.trim())
-              process.stderr.write(e.stderr.trim() + "\n");
-            if (!e.stdout && !e.stderr)
-              process.stderr.write((e.message ?? "command failed") + "\n");
-          }
-        }
+        if (cmd) execShellPassthrough(cmd, deps.cwd);
         continue;
       }
 
       if (line.startsWith("/")) {
-        if (line === "/exit" || line === "/quit") break;
-        else if (line === "/help") process.stdout.write(helpText() + "\n");
-        else if (line === "/todos")
-          process.stdout.write(todoBox(registry.todoState.todos) + "\n");
-        else if (line === "/usage")
-          process.stdout.write(usageSummary(turns) + "\n");
-        else if (line === "/compact") await doCompact("manual");
-        else if (line === "/config") await doConfig();
-        else
-          process.stdout.write(
-            dim(`unknown command: ${line} (try /help)`) + "\n",
-          );
+        const result = handleSlashCommand(line, cmdCtx);
+        if (result === "break") break;
         continue;
       }
 
@@ -422,27 +243,33 @@ export async function runApp(deps: AppDeps): Promise<void> {
       interrupt.arm();
       streamedAnything = false;
       md.reset();
+      const turnDeps = {
+        cwd: deps.cwd,
+        store,
+        registry,
+        config,
+        system,
+        io,
+        ledger,
+        pricing,
+        signal: interrupt.signal,
+        stream,
+        hooks: deps.hooks,
+        sessionState: deps.sessionState,
+        maxToolResultChars: deps.maxToolResultChars,
+        autoCompactAtTokens: autoCompactState.value,
+        mode,
+      };
+      // The user was idle long enough that the cached prefix may have expired;
+      // refresh it before the real request re-writes the whole prefix.
+      if (prewarmIdleMs > 0 && Date.now() - lastTurnEndedAt >= prewarmIdleMs) {
+        startSpinner("warming cache…");
+        await prewarmCache(turnDeps);
+        stopSpinner();
+      }
       startSpinner("thinking…");
       try {
-        const stats = await runTurn(
-          {
-            cwd: deps.cwd,
-            store,
-            registry,
-            config,
-            system,
-            io,
-            ledger,
-            pricing,
-            signal: interrupt.signal,
-            stream,
-            hooks: deps.hooks,
-            sessionState: deps.sessionState,
-            maxToolResultChars: deps.maxToolResultChars,
-            autoCompactAtTokens: autoCompactState.value,
-          },
-          line,
-        );
+        const stats = await runTurn(turnDeps, line);
         turns.push(stats);
         stopSpinner();
         const flushed = md.flush();
@@ -451,11 +278,6 @@ export async function runApp(deps: AppDeps): Promise<void> {
         for (const note of stats.notes) {
           process.stdout.write(dim(`⚠ ${note}`) + "\n");
         }
-        // Auto-compaction now runs inside runTurn (see loop.ts maybeCompact),
-        // so it also covers headless runs and long in-turn tool chains. The
-        // threshold is passed via autoCompactAtTokens above; runTurn emits an
-        // "auto-compacted…" note, printed in the loop above. Manual /compact
-        // still calls doCompact directly.
       } catch (err) {
         stopSpinner();
         md.reset();
@@ -468,6 +290,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
         }
       } finally {
         interrupt.disarm();
+        lastTurnEndedAt = Date.now();
       }
     }
 
@@ -476,7 +299,8 @@ export async function runApp(deps: AppDeps): Promise<void> {
     );
   } finally {
     interrupt.disarm();
+    modeCtl.dispose();
     rl.close();
-    process.stdout.write("\x1b[?25h"); // restore cursor visibility
+    process.stdout.write("\x1b[?25h");
   }
 }

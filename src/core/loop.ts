@@ -7,11 +7,7 @@ import { reduce } from "./reducer.js";
 import { runCompact } from "./compact.js";
 import { applyCacheControl, type CacheLedger } from "./cache.js";
 import { computeCostUsd, resolveRates } from "./cost.js";
-import {
-  pageToolResults,
-  deduplicateReadResult,
-  type SessionState,
-} from "./policies.js";
+import { pageToolResults, type SessionState } from "./policies.js";
 import type { ModelPricing } from "../config.js";
 import type {
   MessagesRequest,
@@ -19,11 +15,17 @@ import type {
   TransportConfig,
   UsageInfo,
 } from "../transport/anthropic.js";
-import { executeTool, type Registry } from "../tools/index.js";
+import type { Registry } from "../tools/index.js";
 import { runHook, type HookConfig } from "./hooks.js";
+import {
+  validateToolUse,
+  executeToolWithPolicies,
+  makeToolResult,
+} from "./tool-exec.js";
 import { toolUses, accumulateUsage } from "../util/message.js";
 import type { ToolUseBlock, ContentBlock } from "../types.js";
 import type { ToolResultBlock } from "../types.js";
+import { modeReminder, type ModeState } from "./mode.js";
 
 export interface TurnIO {
   onText(delta: string): void;
@@ -57,6 +59,10 @@ export interface TurnDeps {
   signal?: AbortSignal;
   // Shared mutable state for context policies (paging, dedup, eviction).
   sessionState?: SessionState;
+  // Session operating mode (build/plan). In plan mode, write tools are refused
+  // in dispatchTool. Read by reference so a Tab press between turns applies to
+  // the next turn.
+  mode?: ModeState;
   // Max chars per tool_result before paging kicks in. 0 = no paging.
   maxToolResultChars?: number;
   // Hook configs keyed by point ("pre-tool" / "post-tool"). Undefined hooks
@@ -126,7 +132,7 @@ export async function runTurn(
   deps: TurnDeps,
   userText: string,
 ): Promise<TurnStats> {
-  const { store, registry, config, system, io } = deps;
+  const { store, config, io } = deps;
   const stats: TurnStats = {
     requests: 0,
     toolCalls: 0,
@@ -144,32 +150,23 @@ export async function runTurn(
   let priceIncomplete = false;
 
   let leaf = reduce(store.all()).leafUuid;
+  const reminder = deps.mode ? modeReminder(deps.mode.current) : null;
+  const userContent = reminder
+    ? [
+        { type: "text" as const, text: reminder },
+        { type: "text" as const, text: userText },
+      ]
+    : [{ type: "text" as const, text: userText }];
   const userEvent = store.append({
     type: "user",
     parentUuid: leaf,
-    message: { role: "user", content: [{ type: "text", text: userText }] },
+    message: { role: "user", content: userContent },
   });
   if (!userEvent.uuid) throw new Error("store.append returned no uuid");
   leaf = userEvent.uuid;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const reduced = reduce(store.all());
-    let apiMessages = reduced.messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    if (deps.sessionState) {
-      if (deps.maxToolResultChars && deps.maxToolResultChars > 0) {
-        apiMessages = pageToolResults(
-          apiMessages,
-          deps.sessionState,
-          deps.maxToolResultChars,
-        );
-      }
-    }
-
-    const request = applyCacheControl(system, registry.schemas(), apiMessages);
+    const request = buildRequest(deps);
     deps.ledger?.beforeRequest(request);
     stats.requests++;
     const result = await deps.stream(
@@ -216,8 +213,32 @@ export async function runTurn(
 
     const results: ToolResultBlock[] = [];
     try {
-      for (const use of uses) {
-        results.push(await dispatchTool(deps, use, stats));
+      // Independent read-only tools from the same assistant turn run
+      // concurrently; anything with side effects, shared state, or a
+      // permission prompt stays serial. We walk the uses in order, greedily
+      // batching a contiguous run of parallel-safe calls, so tool_result
+      // order still mirrors tool_use order (the API pairs by id, but stable
+      // order keeps the transcript readable and the cache prefix predictable).
+      let idx = 0;
+      while (idx < uses.length) {
+        let end = idx;
+        while (end < uses.length && isParallelSafe(deps.registry, uses[end])) {
+          end++;
+        }
+        if (end > idx) {
+          // Contiguous run of parallel-safe calls: dispatch concurrently.
+          const batch = uses.slice(idx, end);
+          const batchResults = await Promise.all(
+            batch.map((b) => dispatchTool(deps, b, stats)),
+          );
+          results.push(...batchResults);
+          idx = end;
+        } else {
+          // Not parallel-safe: dispatch this one serially.
+          const use = uses[idx];
+          if (use) results.push(await dispatchTool(deps, use, stats));
+          idx++;
+        }
       }
     } catch (err) {
       // Invariant: an assistant tool_use block stored in the tree MUST get a
@@ -271,6 +292,55 @@ export async function runTurn(
   }
 
   return stats;
+}
+
+// Builds the next API request from the current store state, applying the
+// same tool-result paging and cache-control breakpoints every turn uses.
+// Shared by the turn loop and the idle keep-alive so both send a byte-stable
+// prefix — the whole point of the keep-alive is to hit that exact prefix.
+function buildRequest(deps: TurnDeps): MessagesRequest {
+  const { store, registry, system } = deps;
+  const reduced = reduce(store.all());
+  let apiMessages = reduced.messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  if (
+    deps.sessionState &&
+    deps.maxToolResultChars &&
+    deps.maxToolResultChars > 0
+  ) {
+    apiMessages = pageToolResults(
+      apiMessages,
+      deps.sessionState,
+      deps.maxToolResultChars,
+    );
+  }
+  return applyCacheControl(system, registry.schemas(), apiMessages);
+}
+
+// Idle keep-alive: re-sends the current cached prefix with a 1-token cap so
+// the provider refreshes the prefix's TTL before it expires. Costs one small
+// request (mostly cache reads) instead of a full multi-100k-token re-write on
+// the next real turn. Best-effort — any error is swallowed; the next real
+// turn simply pays the re-write it would have paid anyway. Does NOT append to
+// the event tree, so it never perturbs the transcript or the moving
+// breakpoint. The ledger is intentionally not updated: this request's usage
+// isn't a turn and shouldn't skew regen detection.
+export async function prewarmCache(deps: TurnDeps): Promise<boolean> {
+  const request = buildRequest(deps);
+  if (request.messages.length === 0) return false;
+  try {
+    await deps.stream(
+      { ...deps.config, maxTokens: 1 },
+      request,
+      () => {},
+      deps.signal,
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Runs auto-compaction when the last request's total input tokens reach the
@@ -329,103 +399,100 @@ async function maybeCompact(
   }
 }
 
+// A tool call may join a concurrent batch only when its definition opts in
+// via parallelSafe (read-only, no shared mutable state) AND it runs without a
+// permission prompt. Unknown/disabled tools fall through to serial dispatch,
+// where validateToolUse produces the proper error result. The synchronous
+// prefix of dispatchTool (validate + schema activation) always runs to
+// completion before the first await, so batching never races registry state.
+function isParallelSafe(
+  registry: Registry,
+  use: ToolUseBlock | undefined,
+): boolean {
+  if (!use) return false;
+  const def = registry.get(use.name);
+  return def?.parallelSafe === true && def.runPermitless;
+}
+
 async function dispatchTool(
   deps: TurnDeps,
   use: ToolUseBlock,
   stats: TurnStats,
 ): Promise<ToolResultBlock> {
   const { registry, io, store } = deps;
-  const input = use.input;
-  const def = registry.get(use.name);
-  stats.toolCalls++;
+  const validation = validateToolUse(registry, use.name, stats);
 
-  let output = "";
-  let isError = false;
-
-  if (!def) {
-    output = `unknown tool: ${use.name}`;
-    isError = true;
-  } else if (!registry.isEnabled(use.name)) {
-    output = `tool disabled for this session: ${use.name}`;
-    isError = true;
-  } else {
-    // Progressive tool loading: the model called an allowed-but-deferred tool
-    // (advertised by name in the system prompt, schema not yet shipped).
-    // Activate it so its full schema joins the prefix on the next request —
-    // one deliberate cache write, then cached thereafter. The current call
-    // still executes normally; inputs are validated in executeTool.
-    if (registry.activate(use.name)) {
-      stats.notes.push(`activated tool schema: ${use.name}`);
-    }
+  if (!validation.valid) {
+    return makeToolResult(use.id, validation.output, true);
   }
-  if (!isError && def && !def.runPermitless) {
-    const perm = await io.permit(use.name, input);
+
+  const def = validation.def;
+
+  if (deps.mode?.current === "plan" && !def.runPermitless) {
+    return makeToolResult(
+      use.id,
+      `blocked: Plan mode is read-only, so ${use.name} cannot run. Present your plan; switch to Build (tab) to apply changes.`,
+      true,
+    );
+  }
+
+  if (!def.runPermitless) {
+    const perm = await io.permit(use.name, use.input);
     if (!perm.allowed) {
-      output = perm.reason
+      const output = perm.reason
         ? `user denied permission for this tool call: ${perm.reason}`
         : "user denied permission for this tool call";
-      isError = true;
+      return makeToolResult(use.id, output, true);
     }
   }
 
-  if (!isError && def) {
-    const sessionId = store.sessionId;
-    const cwd = deps.cwd;
-    const preResults = await runHook(
-      "pre_tool",
-      deps.hooks?.preTool,
-      sessionId,
-      cwd,
-      use.name,
-      input,
-    );
-    if (preResults) {
-      for (const r of preResults) {
-        if (r.stdout) {
-          stats.hookReminders.push(
-            `<system-reminder>\n${r.stdout}\n</system-reminder>`,
-          );
-        }
-      }
-    }
-
-    io.onToolStart(use.name, input);
-    const result = await executeTool(def, input, deps.cwd);
-    output = result.output;
-    isError = result.isError === true;
-
-    if (use.name === "Read" && !isError && deps.sessionState) {
-      const filePath = input.file_path as string;
-      if (filePath && typeof output === "string") {
-        output = deduplicateReadResult(filePath, output, deps.sessionState);
-      }
-    }
-
-    io.onToolEnd(use.name, output, isError);
-
-    const postResults = await runHook(
-      "post_tool",
-      deps.hooks?.postTool,
-      sessionId,
-      cwd,
-      use.name,
-      input,
-    );
-    if (postResults) {
-      for (const r of postResults) {
-        if (r.stdout) {
-          stats.hookReminders.push(
-            `<system-reminder>\n${r.stdout}\n</system-reminder>`,
-          );
-        }
+  const sessionId = store.sessionId;
+  const cwd = deps.cwd;
+  const preResults = await runHook(
+    "pre_tool",
+    deps.hooks?.preTool,
+    sessionId,
+    cwd,
+    use.name,
+    use.input,
+  );
+  if (preResults) {
+    for (const r of preResults) {
+      if (r.stdout) {
+        stats.hookReminders.push(
+          `<system-reminder>\n${r.stdout}\n</system-reminder>`,
+        );
       }
     }
   }
 
-  return {
-    type: "tool_result",
-    tool_use_id: use.id,
-    content: output,
-    ...(isError ? { is_error: true } : {}),
-  };
+  io.onToolStart(use.name, use.input);
+  const { output, isError } = await executeToolWithPolicies(
+    def,
+    use.input,
+    cwd,
+    deps.sessionState,
+    deps.registry.workspaceRoot,
+  );
+  io.onToolEnd(use.name, output, isError);
+
+  const postResults = await runHook(
+    "post_tool",
+    deps.hooks?.postTool,
+    sessionId,
+    cwd,
+    use.name,
+    use.input,
+  );
+  if (postResults) {
+    for (const r of postResults) {
+      if (r.stdout) {
+        stats.hookReminders.push(
+          `<system-reminder>\n${r.stdout}\n</system-reminder>`,
+        );
+      }
+    }
+  }
+
+  return makeToolResult(use.id, output, isError);
 }
