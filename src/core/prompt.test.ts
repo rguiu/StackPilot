@@ -49,12 +49,13 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("Current branch");
   });
 
-  it("includes security and coding conventions", () => {
+  it("includes security and tool usage conventions", () => {
     const prompt = buildSystemPrompt(cwd, model, "", "", null);
     expect(prompt).toContain("Security and safety");
     expect(prompt).toContain("blast radius");
-    expect(prompt).toContain("Coding conventions");
     expect(prompt).toContain("Read before you write");
+    // Coding conventions moved to ~/.stackpilot/CLAUDE.md — not in system prompt
+    expect(prompt).not.toContain("Coding conventions");
   });
 
   it("includes tool usage guidance", () => {
