@@ -28,6 +28,15 @@ autoCompactAtTokens = 160000
 # at cold start — biggest win on short sessions. Off by default.
 # progressiveTools = false
 
+# Idle cache keep-alive (REPL/TUI only). When a turn starts after being idle
+# for at least this many ms, stackpilot first sends a tiny 1-token request
+# that re-reads the current cached prefix, refreshing its TTL before the
+# provider (~5 min) drops it. This trades one cheap cache-read request for the
+# full multi-100K-token prefix RE-WRITE the next real turn would otherwise pay
+# on a cold cache. 0 disables (default). A conservative on-value is ~240000
+# (4 min — just under the typical TTL).
+# cachePrewarmIdleMs = 240000
+
 # Retry behaviour for transient failures (5xx, 429, network errors).
 # Exponential backoff with jitter. Set maxRetries = 0 to disable.
 # [retry]

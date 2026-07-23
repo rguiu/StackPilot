@@ -8,6 +8,7 @@ import type { HookConfig } from "../core/hooks.js";
 import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
+  DEFAULT_CACHE_PREWARM_IDLE_MS,
   DEFAULT_MAX_TOOL_RESULT_CHARS,
   type AppConfig,
   type ModelPricing,
@@ -212,6 +213,15 @@ export function loadAppConfig(
   }
   const progressiveTools = progRaw === true;
 
+  const prewarmRaw = file.cachePrewarmIdleMs;
+  const cachePrewarmIdleMs =
+    prewarmRaw === undefined
+      ? DEFAULT_CACHE_PREWARM_IDLE_MS
+      : asFiniteNumber(prewarmRaw, "cachePrewarmIdleMs");
+  if (cachePrewarmIdleMs < 0) {
+    throw new ConfigError("cachePrewarmIdleMs must be >= 0 (0 disables)");
+  }
+
   return {
     transport,
     pricing: parsePricing(file.pricing, path),
@@ -221,6 +231,7 @@ export function loadAppConfig(
     maxToolResultChars,
     confineToWorkspace,
     progressiveTools,
+    cachePrewarmIdleMs,
   };
 }
 

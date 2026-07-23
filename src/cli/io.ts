@@ -1,6 +1,11 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import { execShellPassthrough } from "../util/shell-exec.js";
-import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
+import {
+  runTurn,
+  prewarmCache,
+  type TurnIO,
+  type TurnStats,
+} from "../core/loop.js";
 import {
   permissionPromptPlain,
   toolStartLine,
@@ -13,6 +18,7 @@ import type { TransportConfig } from "../transport/anthropic.js";
 import type { SessionState } from "../core/policies.js";
 import type { SessionStore } from "../session/store.js";
 import type { ModelPricing } from "../config.js";
+import type { ModeState } from "../core/mode.js";
 
 export interface RunDeps {
   cwd: string;
@@ -29,6 +35,9 @@ export interface RunDeps {
   sessionState: SessionState;
   maxToolResultChars: number;
   autoCompactAtTokens: number;
+  // Idle gap (ms) before a REPL turn that triggers a cache keep-alive. 0 off.
+  cachePrewarmIdleMs: number;
+  mode: ModeState;
 }
 
 export function makeIO(
@@ -128,6 +137,8 @@ export async function runRepl(
 ): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const io = makeIO(rl, yolo, json);
+  // Timestamp of the last completed turn; drives idle cache keep-alive.
+  let lastTurnEndedAt = Date.now();
   for (;;) {
     let line: string;
     try {
@@ -142,8 +153,20 @@ export async function runRepl(
       if (cmd) execShellPassthrough(cmd, deps.cwd);
       continue;
     }
+    // The user was idle long enough that the cached prefix may have expired;
+    // refresh it before the (potentially large) real request re-writes it.
+    if (
+      deps.cachePrewarmIdleMs > 0 &&
+      Date.now() - lastTurnEndedAt >= deps.cachePrewarmIdleMs
+    ) {
+      const warmed = await prewarmCache({ ...deps, io });
+      if (warmed && !json) {
+        process.stderr.write("  ↻ cache kept warm\n");
+      }
+    }
     const stats = await runTurn({ ...deps, io }, line);
     printStats(stats, deps.config.model, json);
+    lastTurnEndedAt = Date.now();
   }
   rl.close();
 }

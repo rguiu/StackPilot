@@ -20,6 +20,7 @@ export const readTool: ToolDef = {
   description:
     "Read a file. Returns line-numbered content. Use offset/limit for large files.",
   runPermitless: true,
+  parallelSafe: true,
   inputSchema: {
     type: "object",
     properties: {

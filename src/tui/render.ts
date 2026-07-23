@@ -13,6 +13,7 @@ export function helpText(): string {
     "/usage         cumulative tokens + cost this session",
     "/compact       summarize the conversation, restart the stack from it",
     "/config        tools (multiselect) · auto-compact threshold",
+    "/mode          switch between Build and Plan (or tab at the prompt)",
     "/exit          quit",
   ].join("\n");
 }

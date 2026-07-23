@@ -15,6 +15,7 @@ import { loadAppConfig, ConfigError, type ModelPricing } from "../config.js";
 import { buildSystemPrompt, getGitContext } from "../core/prompt.js";
 import { loadInstructions, findGitRoot } from "../core/instructions.js";
 import { CacheLedger } from "../core/cache.js";
+import { createModeState } from "../core/mode.js";
 import {
   createRegistry,
   unknownToolNames,
@@ -171,6 +172,7 @@ async function main(): Promise<void> {
   );
   const ledger = new CacheLedger();
   const hooks = appConfig.hooks;
+  const mode = createModeState(args.mode ?? "build");
 
   const deps: RunDeps = {
     cwd,
@@ -185,6 +187,8 @@ async function main(): Promise<void> {
     sessionState,
     maxToolResultChars: appConfig.maxToolResultChars,
     autoCompactAtTokens: appConfig.autoCompactAtTokens,
+    cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
+    mode,
   };
 
   const sessionStartResults = await runHook(
@@ -264,6 +268,8 @@ async function main(): Promise<void> {
       hooks,
       sessionState,
       maxToolResultChars: appConfig.maxToolResultChars,
+      cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
+      mode,
     });
     await fireSessionEnd();
     return;
