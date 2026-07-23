@@ -194,3 +194,29 @@ or lightweight library like `highlight.js`.
 - MCP / plugin integration
 - WebFetch / WebSearch tools
 - GitHub integration (PR creation, issue linking)
+
+---
+
+## 9. File re-read short-circuit
+
+**Status:** 🔍 Deprioritized (marginal ROI)
+
+**What:** Intercept Read tool calls before disk I/O. If the file is in
+the read cache (last content SHA256 matches current) and hasn't been
+modified since last read, return the "[unchanged]" marker immediately
+without an API round-trip.
+
+**Why it's marginal:** StackPilot already deduplicates Read results at
+the tool-result layer (`policies.ts:54`). Re-reads of unchanged files
+produce a tiny ~~40-char marker. The short-circuit would only save the
+per-request overhead (~~$0.005/request), not the big token wins.
+
+**Real fix:** The model re-reads because compaction evicts content from
+context. Raising `autoCompactAtTokens` (currently 160K) or making
+compaction smarter about preserving recent Reads would reduce the need
+to re-read in the first place. Tradeoff: larger context = higher
+per-request cost, but potentially fewer requests.
+
+**Verdict:** Not worth implementing. Short-circuiting re-reads is a
+micro-optimization. Focus on compaction threshold tuning or progressive
+tools (`progressiveTools`) for bigger cost levers.
