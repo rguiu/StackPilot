@@ -185,6 +185,7 @@ async function main(): Promise<void> {
     sessionState,
     maxToolResultChars: appConfig.maxToolResultChars,
     autoCompactAtTokens: appConfig.autoCompactAtTokens,
+    cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
   };
 
   const sessionStartResults = await runHook(
@@ -264,6 +265,7 @@ async function main(): Promise<void> {
       hooks,
       sessionState,
       maxToolResultChars: appConfig.maxToolResultChars,
+      cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
     });
     await fireSessionEnd();
     return;

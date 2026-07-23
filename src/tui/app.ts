@@ -15,7 +15,12 @@ import {
   statsLine,
   toolStartLine,
 } from "./render.js";
-import { runTurn, type TurnIO, type TurnStats } from "../core/loop.js";
+import {
+  runTurn,
+  prewarmCache,
+  type TurnIO,
+  type TurnStats,
+} from "../core/loop.js";
 import { CacheLedger } from "../core/cache.js";
 import { formatUsd } from "../core/cost.js";
 import type { SessionStore } from "../session/store.js";
@@ -46,6 +51,8 @@ export interface AppDeps {
   };
   sessionState?: SessionState;
   maxToolResultChars?: number;
+  // Idle gap (ms) before a turn that triggers a cache keep-alive. 0 disables.
+  cachePrewarmIdleMs?: number;
 }
 
 export async function runApp(deps: AppDeps): Promise<void> {
@@ -59,6 +66,9 @@ export async function runApp(deps: AppDeps): Promise<void> {
   const ledger = new CacheLedger();
   const md = new MarkdownRenderer();
   let streamedAnything = false;
+  const prewarmIdleMs = deps.cachePrewarmIdleMs ?? 0;
+  // Timestamp of the last completed turn; drives the idle cache keep-alive.
+  let lastTurnEndedAt = Date.now();
 
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;
   let spinnerFrame = 0;
@@ -208,27 +218,32 @@ export async function runApp(deps: AppDeps): Promise<void> {
       interrupt.arm();
       streamedAnything = false;
       md.reset();
+      const turnDeps = {
+        cwd: deps.cwd,
+        store,
+        registry,
+        config,
+        system,
+        io,
+        ledger,
+        pricing,
+        signal: interrupt.signal,
+        stream,
+        hooks: deps.hooks,
+        sessionState: deps.sessionState,
+        maxToolResultChars: deps.maxToolResultChars,
+        autoCompactAtTokens: autoCompactState.value,
+      };
+      // The user was idle long enough that the cached prefix may have expired;
+      // refresh it before the real request re-writes the whole prefix.
+      if (prewarmIdleMs > 0 && Date.now() - lastTurnEndedAt >= prewarmIdleMs) {
+        startSpinner("warming cache…");
+        await prewarmCache(turnDeps);
+        stopSpinner();
+      }
       startSpinner("thinking…");
       try {
-        const stats = await runTurn(
-          {
-            cwd: deps.cwd,
-            store,
-            registry,
-            config,
-            system,
-            io,
-            ledger,
-            pricing,
-            signal: interrupt.signal,
-            stream,
-            hooks: deps.hooks,
-            sessionState: deps.sessionState,
-            maxToolResultChars: deps.maxToolResultChars,
-            autoCompactAtTokens: autoCompactState.value,
-          },
-          line,
-        );
+        const stats = await runTurn(turnDeps, line);
         turns.push(stats);
         stopSpinner();
         const flushed = md.flush();
@@ -249,6 +264,7 @@ export async function runApp(deps: AppDeps): Promise<void> {
         }
       } finally {
         interrupt.disarm();
+        lastTurnEndedAt = Date.now();
       }
     }
 

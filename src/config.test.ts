@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
+  DEFAULT_CACHE_PREWARM_IDLE_MS,
   loadAppConfig,
   normalizeAnthropicModel,
   resolveBedrockModel,
@@ -92,6 +93,19 @@ describe("loadAppConfig", () => {
   it("rejects a negative threshold", () => {
     writeFileSync(join(dir, "neg.toml"), "autoCompactAtTokens = -1");
     expect(() => loadAppConfig(env("neg.toml"))).toThrow(ConfigError);
+  });
+
+  it("defaults cachePrewarmIdleMs to the disabled value", () => {
+    const cfg = loadAppConfig(env("missing.toml"));
+    expect(cfg.cachePrewarmIdleMs).toBe(DEFAULT_CACHE_PREWARM_IDLE_MS);
+  });
+
+  it("parses cachePrewarmIdleMs and rejects negatives", () => {
+    writeFileSync(join(dir, "prewarm.toml"), "cachePrewarmIdleMs = 240000\n");
+    expect(loadAppConfig(env("prewarm.toml")).cachePrewarmIdleMs).toBe(240000);
+
+    writeFileSync(join(dir, "prewarm-neg.toml"), "cachePrewarmIdleMs = -1\n");
+    expect(() => loadAppConfig(env("prewarm-neg.toml"))).toThrow(ConfigError);
   });
 });
 

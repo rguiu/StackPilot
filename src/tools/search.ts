@@ -21,6 +21,7 @@ export const grepTool: ToolDef = {
     "Search file contents with a regex (ripgrep). Supports context lines, " +
     "case-insensitive mode, output modes, and file-type filtering.",
   runPermitless: true,
+  parallelSafe: true,
   inputSchema: {
     type: "object",
     properties: {
@@ -168,6 +169,7 @@ export const globTool: ToolDef = {
     'in docs), or "*.json" (top-level only). Returns sorted relative paths. ' +
     "Skip dirs: .git, node_modules, dist.",
   runPermitless: true,
+  parallelSafe: true,
   inputSchema: {
     type: "object",
     properties: {

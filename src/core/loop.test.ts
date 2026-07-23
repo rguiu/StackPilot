@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { runTurn, type TurnDeps, type TurnIO } from "./loop.js";
+import { runTurn, prewarmCache, type TurnDeps, type TurnIO } from "./loop.js";
 import { SessionStore } from "../session/store.js";
 import { createRegistry } from "../tools/index.js";
 import type { StreamResult } from "../transport/anthropic.js";
@@ -226,6 +226,130 @@ describe("runTurn tool_use/tool_result invariant", () => {
     expect(
       stats.notes.some((n) => n.includes("activated tool schema: Bash")),
     ).toBe(true);
+  });
+
+  it("dispatches a contiguous run of parallel-safe reads concurrently, preserving order", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "sp-par-"));
+    writeFileSync(join(cwd, "a.txt"), "alpha");
+    writeFileSync(join(cwd, "b.txt"), "bravo");
+    writeFileSync(join(cwd, "c.txt"), "charlie");
+    const store = SessionStore.create(cwd, home);
+    const registry = createRegistry();
+    registry.setEnabled(["Read"]);
+    let call = 0;
+    const deps: TurnDeps = {
+      cwd,
+      store,
+      registry,
+      config,
+      system: "test",
+      io: silentIO(() => Promise.resolve({ allowed: false })),
+      stream: async () => {
+        if (call++ === 0) {
+          return {
+            content: [
+              {
+                type: "tool_use",
+                id: "tu_a",
+                name: "Read",
+                input: { file_path: join(cwd, "a.txt") },
+              },
+              {
+                type: "tool_use",
+                id: "tu_b",
+                name: "Read",
+                input: { file_path: join(cwd, "b.txt") },
+              },
+              {
+                type: "tool_use",
+                id: "tu_c",
+                name: "Read",
+                input: { file_path: join(cwd, "c.txt") },
+              },
+            ],
+            stopReason: "tool_use",
+            usage: { input_tokens: 10, output_tokens: 5 },
+            model: "test-model",
+          };
+        }
+        return textResponse("done");
+      },
+    };
+
+    await runTurn(deps, "read all three");
+
+    // tool_result order must mirror tool_use order regardless of concurrency.
+    const resultIds: string[] = [];
+    for (const e of store.all()) {
+      const content = e.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content as {
+        type: string;
+        tool_use_id?: string;
+      }[]) {
+        if (block.type === "tool_result" && block.tool_use_id)
+          resultIds.push(block.tool_use_id);
+      }
+    }
+    expect(resultIds).toEqual(["tu_a", "tu_b", "tu_c"]);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("prewarmCache sends a 1-token request without touching the event tree", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    // Seed one user turn so the request has a non-empty message list.
+    store.append({
+      type: "user",
+      parentUuid: null,
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+    const before = store.all().length;
+    let calls = 0;
+    let seenMaxTokens: number | undefined;
+    const deps: TurnDeps = {
+      cwd: "/fake/cwd",
+      store,
+      registry: createRegistry(),
+      config,
+      system: "test",
+      io: silentIO(() => Promise.resolve({ allowed: false })),
+      stream: async (cfg) => {
+        calls++;
+        seenMaxTokens = cfg.maxTokens;
+        return textResponse("ignored");
+      },
+    };
+
+    const warmed = await prewarmCache(deps);
+
+    expect(warmed).toBe(true);
+    expect(calls).toBe(1);
+    // maxTokens is capped to 1 for the keep-alive.
+    expect(seenMaxTokens).toBe(1);
+    // No new events appended.
+    expect(store.all().length).toBe(before);
+  });
+
+  it("prewarmCache returns false and swallows transport errors", async () => {
+    const store = SessionStore.create("/fake/cwd", home);
+    store.append({
+      type: "user",
+      parentUuid: null,
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+    const deps: TurnDeps = {
+      cwd: "/fake/cwd",
+      store,
+      registry: createRegistry(),
+      config,
+      system: "test",
+      io: silentIO(() => Promise.resolve({ allowed: false })),
+      stream: async () => {
+        throw new Error("network down");
+      },
+    };
+
+    await expect(prewarmCache(deps)).resolves.toBe(false);
   });
 
   it("rejects a disabled tool without consulting the permission gate", async () => {

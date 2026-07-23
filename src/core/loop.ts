@@ -127,7 +127,7 @@ export async function runTurn(
   deps: TurnDeps,
   userText: string,
 ): Promise<TurnStats> {
-  const { store, registry, config, system, io } = deps;
+  const { store, config, io } = deps;
   const stats: TurnStats = {
     requests: 0,
     toolCalls: 0,
@@ -154,23 +154,7 @@ export async function runTurn(
   leaf = userEvent.uuid;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const reduced = reduce(store.all());
-    let apiMessages = reduced.messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    if (deps.sessionState) {
-      if (deps.maxToolResultChars && deps.maxToolResultChars > 0) {
-        apiMessages = pageToolResults(
-          apiMessages,
-          deps.sessionState,
-          deps.maxToolResultChars,
-        );
-      }
-    }
-
-    const request = applyCacheControl(system, registry.schemas(), apiMessages);
+    const request = buildRequest(deps);
     deps.ledger?.beforeRequest(request);
     stats.requests++;
     const result = await deps.stream(
@@ -217,8 +201,32 @@ export async function runTurn(
 
     const results: ToolResultBlock[] = [];
     try {
-      for (const use of uses) {
-        results.push(await dispatchTool(deps, use, stats));
+      // Independent read-only tools from the same assistant turn run
+      // concurrently; anything with side effects, shared state, or a
+      // permission prompt stays serial. We walk the uses in order, greedily
+      // batching a contiguous run of parallel-safe calls, so tool_result
+      // order still mirrors tool_use order (the API pairs by id, but stable
+      // order keeps the transcript readable and the cache prefix predictable).
+      let idx = 0;
+      while (idx < uses.length) {
+        let end = idx;
+        while (end < uses.length && isParallelSafe(deps.registry, uses[end])) {
+          end++;
+        }
+        if (end > idx) {
+          // Contiguous run of parallel-safe calls: dispatch concurrently.
+          const batch = uses.slice(idx, end);
+          const batchResults = await Promise.all(
+            batch.map((b) => dispatchTool(deps, b, stats)),
+          );
+          results.push(...batchResults);
+          idx = end;
+        } else {
+          // Not parallel-safe: dispatch this one serially.
+          const use = uses[idx];
+          if (use) results.push(await dispatchTool(deps, use, stats));
+          idx++;
+        }
       }
     } catch (err) {
       // Invariant: an assistant tool_use block stored in the tree MUST get a
@@ -272,6 +280,55 @@ export async function runTurn(
   }
 
   return stats;
+}
+
+// Builds the next API request from the current store state, applying the
+// same tool-result paging and cache-control breakpoints every turn uses.
+// Shared by the turn loop and the idle keep-alive so both send a byte-stable
+// prefix — the whole point of the keep-alive is to hit that exact prefix.
+function buildRequest(deps: TurnDeps): MessagesRequest {
+  const { store, registry, system } = deps;
+  const reduced = reduce(store.all());
+  let apiMessages = reduced.messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  if (
+    deps.sessionState &&
+    deps.maxToolResultChars &&
+    deps.maxToolResultChars > 0
+  ) {
+    apiMessages = pageToolResults(
+      apiMessages,
+      deps.sessionState,
+      deps.maxToolResultChars,
+    );
+  }
+  return applyCacheControl(system, registry.schemas(), apiMessages);
+}
+
+// Idle keep-alive: re-sends the current cached prefix with a 1-token cap so
+// the provider refreshes the prefix's TTL before it expires. Costs one small
+// request (mostly cache reads) instead of a full multi-100k-token re-write on
+// the next real turn. Best-effort — any error is swallowed; the next real
+// turn simply pays the re-write it would have paid anyway. Does NOT append to
+// the event tree, so it never perturbs the transcript or the moving
+// breakpoint. The ledger is intentionally not updated: this request's usage
+// isn't a turn and shouldn't skew regen detection.
+export async function prewarmCache(deps: TurnDeps): Promise<boolean> {
+  const request = buildRequest(deps);
+  if (request.messages.length === 0) return false;
+  try {
+    await deps.stream(
+      { ...deps.config, maxTokens: 1 },
+      request,
+      () => {},
+      deps.signal,
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Runs auto-compaction when the last request's total input tokens reach the
@@ -328,6 +385,21 @@ async function maybeCompact(
     );
     return leaf;
   }
+}
+
+// A tool call may join a concurrent batch only when its definition opts in
+// via parallelSafe (read-only, no shared mutable state) AND it runs without a
+// permission prompt. Unknown/disabled tools fall through to serial dispatch,
+// where validateToolUse produces the proper error result. The synchronous
+// prefix of dispatchTool (validate + schema activation) always runs to
+// completion before the first await, so batching never races registry state.
+function isParallelSafe(
+  registry: Registry,
+  use: ToolUseBlock | undefined,
+): boolean {
+  if (!use) return false;
+  const def = registry.get(use.name);
+  return def?.parallelSafe === true && def.runPermitless;
 }
 
 async function dispatchTool(
