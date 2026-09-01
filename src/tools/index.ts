@@ -85,6 +85,13 @@ export function createRegistry(
   let active: ReadonlySet<string> | null = null;
   const workspaceRoot = agentCfg?.workspaceRoot;
 
+  // Tool-pool contraction bookkeeping: a "round" is a compaction boundary
+  // (not a turn). lastTouchedRound tracks, per tool, the round it was last
+  // dispatched or (re)activated in — contractDisused() deactivates anything
+  // that's fallen too far behind the current round.
+  let round = 0;
+  const lastTouchedRound = new Map<string, number>();
+
   const isAllowed = (name: string): boolean =>
     enabled === null || enabled.has(name);
   const isActive = (name: string): boolean =>
@@ -123,6 +130,8 @@ export function createRegistry(
       if (!byName.has(name) || !isAllowed(name) || active.has(name))
         return false;
       active = new Set(active).add(name);
+      // Full grace period from the moment of activation.
+      lastTouchedRound.set(name, round);
       return true;
     },
     deferredTools() {
@@ -131,6 +140,27 @@ export function createRegistry(
       return defs
         .filter((d) => isAllowed(d.name) && !activeSet.has(d.name))
         .map((d) => ({ name: d.name, description: d.description }));
+    },
+    touch(name) {
+      if (active === null) return;
+      lastTouchedRound.set(name, round);
+    },
+    contractDisused(maxIdleRounds) {
+      if (active === null || maxIdleRounds <= 0) return [];
+      round++;
+      const contracted: string[] = [];
+      const next = new Set(active);
+      for (const name of active) {
+        if (CORE_TOOLS.includes(name)) continue;
+        const lastTouched = lastTouchedRound.get(name) ?? 0;
+        if (round - lastTouched >= maxIdleRounds) {
+          next.delete(name);
+          lastTouchedRound.delete(name);
+          contracted.push(name);
+        }
+      }
+      active = next;
+      return contracted;
     },
   };
 

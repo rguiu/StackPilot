@@ -34,6 +34,7 @@ export function validateToolUse(
     activated = true;
     stats.notes.push(`activated tool schema: ${name}`);
   }
+  registry.touch(name);
 
   return { valid: true, def, activated };
 }

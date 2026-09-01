@@ -85,6 +85,12 @@ export interface TurnDeps {
   // Maximum tool-use iterations per turn. Defaults to DEFAULT_MAX_ITERATIONS
   // (200) from config/types if not set. Guards against unbounded loops.
   maxIterations?: number;
+  // Compaction rounds a progressively-activated tool can go unused before
+  // it's deactivated again. 0/undefined disables contraction.
+  toolContractionRounds?: number;
+  // Hard cap (chars) on a compaction summary before compression/truncation
+  // kicks in. 0/undefined disables.
+  compactSummaryMaxChars?: number;
   // Notified when an auto-compaction runs mid-turn, so the UI can surface it.
   onCompact?: (info: {
     totalMessages: number;
@@ -316,7 +322,12 @@ function buildRequest(deps: TurnDeps): MessagesRequest {
       deps.maxToolResultChars,
     );
   }
-  return applyCacheControl(system, registry.schemas(), apiMessages);
+  return applyCacheControl(
+    system,
+    registry.schemas(),
+    apiMessages,
+    deps.config.cacheTtl,
+  );
 }
 
 // Idle keep-alive: re-sends the current cached prefix with a 1-token cap so
@@ -372,6 +383,8 @@ async function maybeCompact(
             postCompact: deps.hooks.postCompact,
           }
         : undefined,
+      toolContractionRounds: deps.toolContractionRounds,
+      compactSummaryMaxChars: deps.compactSummaryMaxChars,
     });
     if (!res) return leaf;
 
@@ -379,8 +392,13 @@ async function maybeCompact(
       stats.costUsd = (stats.costUsd ?? 0) + res.costUsd;
     }
     stats.notes.push(
-      `auto-compacted at ${stats.lastRequestInputTokens} tokens (≥ ${threshold}): ${res.totalMessages} messages → ${res.summaryChars}-char summary`,
+      `auto-compacted at ${stats.lastRequestInputTokens} tokens (≥ ${threshold}): ${res.totalMessages} messages → ${res.summaryChars}-char summary${res.compressed ? " (compressed)" : ""}`,
     );
+    if (res.contractedTools.length > 0) {
+      stats.notes.push(
+        `contracted disused tools: ${res.contractedTools.join(", ")}`,
+      );
+    }
     deps.onCompact?.({
       totalMessages: res.totalMessages,
       summaryChars: res.summaryChars,

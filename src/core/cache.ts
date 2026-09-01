@@ -33,11 +33,19 @@ type Message = { role: "user" | "assistant"; content: ContentBlock[] };
 
 const EPHEMERAL = { type: "ephemeral" } as const;
 
+type CacheMarker = { type: "ephemeral"; ttl?: "1h" };
+
+function markerFor(ttl: "5m" | "1h" | undefined): CacheMarker {
+  return ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : EPHEMERAL;
+}
+
 export function applyCacheControl(
   system: string,
   tools: unknown[],
   messages: Message[],
+  ttl?: "5m" | "1h",
 ): MessagesRequest {
+  const marker = markerFor(ttl);
   // Split system into 2 cache blocks: static rules (identity, security,
   // coding conventions, tool usage) vs dynamic content (skills, CLAUDE.md).
   // This way a CLAUDE.md change only invalidates block 1, not block 0.
@@ -45,7 +53,7 @@ export function applyCacheControl(
   const systemBlocks: {
     type: "text";
     text: string;
-    cache_control?: { type: "ephemeral" };
+    cache_control?: CacheMarker;
   }[] = [];
 
   if (splitIdx > 0) {
@@ -55,18 +63,18 @@ export function applyCacheControl(
       systemBlocks.push({
         type: "text",
         text: staticBlock,
-        cache_control: EPHEMERAL,
+        cache_control: marker,
       });
     }
     if (dynamicBlock.length > 0) {
       systemBlocks.push({
         type: "text",
         text: dynamicBlock,
-        cache_control: EPHEMERAL,
+        cache_control: marker,
       });
     }
   } else {
-    systemBlocks.push({ type: "text", text: system, cache_control: EPHEMERAL });
+    systemBlocks.push({ type: "text", text: system, cache_control: marker });
   }
 
   // The moving breakpoint goes on the last message that actually has content.
@@ -86,7 +94,7 @@ export function applyCacheControl(
       ? messages
       : messages.map((m, i) => {
           if (i === movingIdx || (markAnchor && i === anchorIdx)) {
-            return markLastBlock(m);
+            return markLastBlock(m, marker);
           }
           return m;
         });
@@ -126,13 +134,13 @@ function findDynamicSplit(system: string): number {
   return -1;
 }
 
-function markLastBlock(message: Message): Message {
+function markLastBlock(message: Message, marker: CacheMarker): Message {
   const { content } = message;
   if (Array.isArray(content) && content.length > 0) {
     const blocks = content.slice(0, -1);
     const last = content[content.length - 1];
     if (last) {
-      blocks.push({ ...last, cache_control: EPHEMERAL });
+      blocks.push({ ...last, cache_control: marker });
     }
     return { role: message.role, content: blocks };
   }

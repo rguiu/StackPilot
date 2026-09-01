@@ -10,12 +10,14 @@ that are not yet implemented.
 
 ### 1. Minimal tool loading (highest ROI) — ✅ IMPLEMENTED
 
-**Status:** Shipped behind `progressiveTools` (config, default off). Sessions
-activate only `CORE_TOOLS` (Read/Grep/Glob) up front; other allowed tools are
-advertised by name in the system prompt and their schemas activate on first
-use via `registry.activate()` in `loop.ts` dispatch. See `src/tools/index.ts`
-(active vs allow set) and the "Additional tools (loaded on demand)" prompt
-section.
+**Status:** Shipped behind `progressiveTools` (config, default **on**).
+Sessions activate only `CORE_TOOLS` (Read/Grep/Glob) up front; other allowed
+tools are advertised by name in the system prompt and their schemas activate
+on first use via `registry.activate()` in `tool-exec.ts` dispatch. See
+`src/tools/index.ts` (active vs allow set) and the "Additional tools (loaded
+on demand)" prompt section. `registry.contractDisused()` deactivates a tool
+again after `toolContractionRounds` compactions of disuse, so the prefix
+doesn't just monotonically grow over a long session.
 
 **What:** Start sessions with a minimal tool set (Read, Grep, Glob) and add
 tools (Write, Edit, Bash) lazily when the model first tries to use them.

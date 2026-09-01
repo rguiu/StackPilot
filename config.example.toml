@@ -25,8 +25,28 @@ autoCompactAtTokens = 160000
 # exploration tools' schemas (Read/Grep/Glob); every other allowed tool is
 # advertised by name in the system prompt and its full schema is loaded the
 # first time the model calls it. Shrinks the cached tool prefix (~12K tokens)
-# at cold start — biggest win on short sessions. Off by default.
-# progressiveTools = false
+# at cold start — biggest win on short sessions. On by default; set to false
+# to disable.
+# progressiveTools = true
+
+# Compaction rounds a progressively-activated tool (see progressiveTools
+# above) can go unused before it's deactivated again, shrinking the tool
+# prefix back down. A "round" is a compaction boundary, not a turn. 0
+# disables contraction.
+# toolContractionRounds = 3
+
+# Hard cap (chars) on a compaction summary. Once a summary exceeds this, one
+# follow-up call on the cheap model compresses it under the cap; if that
+# still doesn't fit, it's hard-truncated as a safety net. Guards against
+# unbounded summary growth across repeated compactions in one long session.
+# 0 disables.
+# compactSummaryMaxChars = 6000
+
+# Prompt-cache TTL for every cache_control marker: "5m" (default) or "1h".
+# "1h" needs the extended-cache-ttl beta and costs more per cache write, but
+# survives longer idle gaps between requests before the prefix re-writes.
+# Best-effort on Bedrock — 1h TTL support there is unverified.
+# cacheTtl = "5m"
 
 # Idle cache keep-alive (REPL/TUI only). When a turn starts after being idle
 # for at least this many ms, stackpilot first sends a tiny 1-token request

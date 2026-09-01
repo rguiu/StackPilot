@@ -9,9 +9,11 @@ import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   DEFAULT_CACHE_PREWARM_IDLE_MS,
+  DEFAULT_COMPACT_SUMMARY_MAX_CHARS,
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MAX_TOOL_RESULT_CHARS,
   DEFAULT_SUBAGENT_MAX_ITERATIONS,
+  DEFAULT_TOOL_CONTRACTION_ROUNDS,
   type AppConfig,
   type ModelPricing,
 } from "./types.js";
@@ -197,6 +199,13 @@ export function loadAppConfig(
     transport.thinkingBudgetTokens = file.thinkingBudgetTokens;
   }
 
+  if (file.cacheTtl !== undefined) {
+    if (file.cacheTtl !== "5m" && file.cacheTtl !== "1h") {
+      throw new ConfigError('cacheTtl must be "5m" or "1h"');
+    }
+    transport.cacheTtl = file.cacheTtl;
+  }
+
   const maxRaw = file.maxToolResultChars;
   const maxToolResultChars =
     maxRaw === undefined
@@ -213,7 +222,7 @@ export function loadAppConfig(
   if (progRaw !== undefined && typeof progRaw !== "boolean") {
     throw new ConfigError("progressiveTools must be a boolean");
   }
-  const progressiveTools = progRaw === true;
+  const progressiveTools = progRaw === undefined ? true : progRaw;
 
   const prewarmRaw = file.cachePrewarmIdleMs;
   const cachePrewarmIdleMs =
@@ -242,6 +251,24 @@ export function loadAppConfig(
     throw new ConfigError("subagentMaxIterations must be >= 1");
   }
 
+  const contractionRaw = file.toolContractionRounds;
+  const toolContractionRounds =
+    contractionRaw === undefined
+      ? DEFAULT_TOOL_CONTRACTION_ROUNDS
+      : asFiniteNumber(contractionRaw, "toolContractionRounds");
+  if (toolContractionRounds < 0) {
+    throw new ConfigError("toolContractionRounds must be >= 0 (0 disables)");
+  }
+
+  const summaryCapRaw = file.compactSummaryMaxChars;
+  const compactSummaryMaxChars =
+    summaryCapRaw === undefined
+      ? DEFAULT_COMPACT_SUMMARY_MAX_CHARS
+      : asFiniteNumber(summaryCapRaw, "compactSummaryMaxChars");
+  if (compactSummaryMaxChars < 0) {
+    throw new ConfigError("compactSummaryMaxChars must be >= 0 (0 disables)");
+  }
+
   return {
     transport,
     pricing: parsePricing(file.pricing, path),
@@ -254,6 +281,8 @@ export function loadAppConfig(
     cachePrewarmIdleMs,
     maxIterations,
     subagentMaxIterations,
+    toolContractionRounds,
+    compactSummaryMaxChars,
   };
 }
 

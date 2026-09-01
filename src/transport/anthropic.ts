@@ -55,6 +55,9 @@ export async function streamMessage(
       "content-type": "application/json",
       "x-api-key": cfg.apiKey,
       "anthropic-version": "2023-06-01",
+      ...(cfg.cacheTtl === "1h"
+        ? { "anthropic-beta": "extended-cache-ttl-2025-04-11" }
+        : {}),
     },
     body: JSON.stringify({
       model: cfg.model,
