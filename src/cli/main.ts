@@ -190,6 +190,8 @@ async function main(): Promise<void> {
     autoCompactAtTokens: appConfig.autoCompactAtTokens,
     cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
     maxIterations: appConfig.maxIterations,
+    toolContractionRounds: appConfig.toolContractionRounds,
+    compactSummaryMaxChars: appConfig.compactSummaryMaxChars,
     mode,
   };
 
@@ -272,6 +274,8 @@ async function main(): Promise<void> {
       maxToolResultChars: appConfig.maxToolResultChars,
       cachePrewarmIdleMs: appConfig.cachePrewarmIdleMs,
       maxIterations: appConfig.maxIterations,
+      toolContractionRounds: appConfig.toolContractionRounds,
+      compactSummaryMaxChars: appConfig.compactSummaryMaxChars,
       mode,
     });
     await fireSessionEnd();

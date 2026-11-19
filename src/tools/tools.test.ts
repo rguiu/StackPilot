@@ -218,3 +218,60 @@ describe("progressive tool loading (active set)", () => {
     expect(r.activate("Nope")).toBe(false);
   });
 });
+
+describe("tool-pool contraction", () => {
+  it("is a no-op when progressive loading is off (active === null)", () => {
+    const r = createRegistry();
+    expect(r.contractDisused(1)).toEqual([]);
+    expect(r.schemas().length).toBe(r.defs.length);
+  });
+
+  it("is a no-op when maxIdleRounds <= 0", () => {
+    const r = createRegistry();
+    r.setActive(["Read", "Bash"]);
+    expect(r.contractDisused(0)).toEqual([]);
+    expect(r.schemas().map((s) => s.name)).toEqual(["Read", "Bash"]);
+  });
+
+  it("never contracts a CORE_TOOLS member", () => {
+    const r = createRegistry();
+    r.setActive(["Read", "Grep", "Glob"]);
+    // Three idle rounds with maxIdleRounds=1 would contract anything else.
+    r.contractDisused(1);
+    r.contractDisused(1);
+    r.contractDisused(1);
+    expect(r.schemas().map((s) => s.name)).toEqual(["Read", "Grep", "Glob"]);
+  });
+
+  it("deactivates a tool unused for maxIdleRounds rounds", () => {
+    const r = createRegistry();
+    r.setActive(["Read"]);
+    r.activate("Bash");
+    expect(r.schemas().map((s) => s.name)).toContain("Bash");
+
+    // Round 1: still within the grace period (activated this round).
+    expect(r.contractDisused(2)).toEqual([]);
+    // Round 2: two idle rounds reached → contracted.
+    expect(r.contractDisused(2)).toEqual(["Bash"]);
+    expect(r.schemas().map((s) => s.name)).not.toContain("Bash");
+    expect(r.deferredTools().map((t) => t.name)).toContain("Bash");
+  });
+
+  it("touch() resets the idle counter, keeping a used tool active", () => {
+    const r = createRegistry();
+    r.setActive(["Read"]);
+    r.activate("Bash");
+
+    r.contractDisused(2); // round 1
+    r.touch("Bash"); // reset idle counter
+    r.contractDisused(2); // round 2 — would contract without the touch
+    expect(r.schemas().map((s) => s.name)).toContain("Bash");
+  });
+
+  it("touch() is a no-op when progressive loading is off", () => {
+    const r = createRegistry();
+    expect(() => {
+      r.touch("Bash");
+    }).not.toThrow();
+  });
+});

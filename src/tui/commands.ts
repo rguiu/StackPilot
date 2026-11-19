@@ -39,6 +39,8 @@ export interface CommandContext {
   };
   turns: TurnStats[];
   autoCompactState: { value: number };
+  toolContractionRounds?: number;
+  compactSummaryMaxChars?: number;
   mode: ModeState;
   startSpinner: (label: string) => void;
   stopSpinner: () => void;
@@ -62,6 +64,8 @@ export async function doCompact(
       signal: interrupt.signal,
       stream: ctx.stream,
       hooks: ctx.hooks,
+      toolContractionRounds: ctx.toolContractionRounds,
+      compactSummaryMaxChars: ctx.compactSummaryMaxChars,
     });
     stopSpinner();
     if (!res) {
@@ -69,11 +73,18 @@ export async function doCompact(
       return;
     }
     const cost = res.costUsd !== null ? ` · ${formatUsd(res.costUsd)}` : "";
+    const compressedNote = res.compressed ? " (compressed)" : "";
     process.stdout.write(
       dim(
-        `✂ compacted (${reason}): ${res.totalMessages} messages → ${res.summaryChars}-char summary${cost}`,
+        `✂ compacted (${reason}): ${res.totalMessages} messages → ${res.summaryChars}-char summary${compressedNote}${cost}`,
       ) + "\n",
     );
+    if (res.contractedTools.length > 0) {
+      process.stdout.write(
+        dim(`  contracted disused tools: ${res.contractedTools.join(", ")}`) +
+          "\n",
+      );
+    }
   } catch (err) {
     stopSpinner();
     if (isAbort(err)) {

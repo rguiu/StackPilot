@@ -95,6 +95,51 @@ describe("applyCacheControl", () => {
   });
 });
 
+describe("applyCacheControl ttl", () => {
+  it("omitted ttl keeps today's behavior byte-for-byte", () => {
+    const withoutTtl = applyCacheControl("SYS", [], [msg("user", "hi")]);
+    const withUndefined = applyCacheControl(
+      "SYS",
+      [],
+      [msg("user", "hi")],
+      undefined,
+    );
+    expect(withUndefined).toEqual(withoutTtl);
+  });
+
+  it('"5m" keeps today\'s behavior byte-for-byte', () => {
+    const withoutTtl = applyCacheControl("SYS", [], [msg("user", "hi")]);
+    const with5m = applyCacheControl("SYS", [], [msg("user", "hi")], "5m");
+    expect(with5m).toEqual(withoutTtl);
+  });
+
+  it('"1h" puts ttl:"1h" on every cache_control marker', () => {
+    const req = applyCacheControl(
+      "SYS",
+      [],
+      [msg("user", "one"), msg("assistant", "two"), msg("user", "three")],
+      "1h",
+    );
+    expect(req.system).toEqual([
+      {
+        type: "text",
+        text: "SYS",
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      },
+    ]);
+    const first = req.messages[0]!.content as Record<string, unknown>[];
+    expect(first[first.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+      ttl: "1h",
+    });
+    const last = req.messages[2]!.content as Record<string, unknown>[];
+    expect(last[last.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+      ttl: "1h",
+    });
+  });
+});
+
 describe("stripCacheControl", () => {
   it("removes every marker, deep", () => {
     const req = applyCacheControl("SYS", [], [msg("user", "hi")]);

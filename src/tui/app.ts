@@ -60,6 +60,8 @@ export interface AppDeps {
   // Idle gap (ms) before a turn that triggers a cache keep-alive. 0 disables.
   cachePrewarmIdleMs?: number;
   maxIterations?: number;
+  toolContractionRounds?: number;
+  compactSummaryMaxChars?: number;
   mode?: ModeState;
 }
 
@@ -189,6 +191,8 @@ export async function runApp(deps: AppDeps): Promise<void> {
       : undefined,
     turns,
     autoCompactState,
+    toolContractionRounds: deps.toolContractionRounds,
+    compactSummaryMaxChars: deps.compactSummaryMaxChars,
     mode,
     startSpinner,
     stopSpinner,
@@ -260,6 +264,8 @@ export async function runApp(deps: AppDeps): Promise<void> {
         maxToolResultChars: deps.maxToolResultChars,
         autoCompactAtTokens: autoCompactState.value,
         maxIterations: deps.maxIterations,
+        toolContractionRounds: deps.toolContractionRounds,
+        compactSummaryMaxChars: deps.compactSummaryMaxChars,
         mode,
       };
       // The user was idle long enough that the cached prefix may have expired;

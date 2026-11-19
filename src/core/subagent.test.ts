@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { runSubagent } from "./subagent.js";
 import { createRegistry } from "../tools/index.js";
-import type { TransportConfig, StreamResult } from "../transport/anthropic.js";
+import type {
+  MessagesRequest,
+  TransportConfig,
+  StreamResult,
+} from "../transport/anthropic.js";
 
 const config: TransportConfig = {
   baseUrl: "http://x",
@@ -124,5 +128,59 @@ describe("runSubagent text extraction", () => {
         "/fake/cwd",
       ),
     ).rejects.toThrow("aborted");
+  });
+});
+
+describe("runSubagent request caching", () => {
+  it("applies cache_control markers to every iteration's request", async () => {
+    const registry = createRegistry();
+    const captured: MessagesRequest[] = [];
+    let call = 0;
+    await runSubagent(
+      config,
+      registry,
+      { description: "test", prompt: "hello" },
+      async (_cfg, req) => {
+        captured.push(req);
+        call++;
+        if (call <= 2) return toolUseResponse();
+        return textResponse("all done");
+      },
+      undefined,
+      undefined,
+      "/fake/cwd",
+    );
+    expect(captured.length).toBeGreaterThanOrEqual(3);
+    for (const req of captured) {
+      const json = JSON.stringify(req);
+      expect(json).toContain("cache_control");
+    }
+    const first = captured[0]!;
+    const systemBlocks = first.system as Record<string, unknown>[];
+    expect(systemBlocks[systemBlocks.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+    });
+  });
+
+  it("passes subConfig.cacheTtl through to the request", async () => {
+    const registry = createRegistry();
+    let captured: MessagesRequest | undefined;
+    await runSubagent(
+      { ...config, cacheTtl: "1h" },
+      registry,
+      { description: "test", prompt: "hello" },
+      async (_cfg, req) => {
+        captured = req;
+        return textResponse("done");
+      },
+      undefined,
+      undefined,
+      "/fake/cwd",
+    );
+    const systemBlocks = captured!.system as Record<string, unknown>[];
+    expect(systemBlocks[systemBlocks.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+      ttl: "1h",
+    });
   });
 });

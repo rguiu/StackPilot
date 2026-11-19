@@ -12,8 +12,10 @@ import {
   ConfigError,
   DEFAULT_AUTO_COMPACT_AT_TOKENS,
   DEFAULT_CACHE_PREWARM_IDLE_MS,
+  DEFAULT_COMPACT_SUMMARY_MAX_CHARS,
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_SUBAGENT_MAX_ITERATIONS,
+  DEFAULT_TOOL_CONTRACTION_ROUNDS,
   loadAppConfig,
   normalizeAnthropicModel,
   resolveBedrockModel,
@@ -138,6 +140,53 @@ describe("loadAppConfig", () => {
   it("rejects negative subagentMaxIterations", () => {
     writeFileSync(join(dir, "sub-neg.toml"), "subagentMaxIterations = -5");
     expect(() => loadAppConfig(env("sub-neg.toml"))).toThrow(ConfigError);
+  });
+
+  it("defaults progressiveTools to true", () => {
+    const cfg = loadAppConfig(env("missing.toml"));
+    expect(cfg.progressiveTools).toBe(true);
+  });
+
+  it("explicit progressiveTools = false still opts out", () => {
+    writeFileSync(join(dir, "prog-off.toml"), "progressiveTools = false\n");
+    expect(loadAppConfig(env("prog-off.toml")).progressiveTools).toBe(false);
+  });
+
+  it("defaults toolContractionRounds and compactSummaryMaxChars", () => {
+    const cfg = loadAppConfig(env("missing.toml"));
+    expect(cfg.toolContractionRounds).toBe(DEFAULT_TOOL_CONTRACTION_ROUNDS);
+    expect(cfg.compactSummaryMaxChars).toBe(DEFAULT_COMPACT_SUMMARY_MAX_CHARS);
+  });
+
+  it("parses toolContractionRounds and compactSummaryMaxChars, 0 allowed", () => {
+    writeFileSync(
+      join(dir, "contraction.toml"),
+      "toolContractionRounds = 0\ncompactSummaryMaxChars = 0\n",
+    );
+    const cfg = loadAppConfig(env("contraction.toml"));
+    expect(cfg.toolContractionRounds).toBe(0);
+    expect(cfg.compactSummaryMaxChars).toBe(0);
+  });
+
+  it("rejects negative toolContractionRounds and compactSummaryMaxChars", () => {
+    writeFileSync(join(dir, "tcr-neg.toml"), "toolContractionRounds = -1");
+    expect(() => loadAppConfig(env("tcr-neg.toml"))).toThrow(ConfigError);
+
+    writeFileSync(join(dir, "csmc-neg.toml"), "compactSummaryMaxChars = -1");
+    expect(() => loadAppConfig(env("csmc-neg.toml"))).toThrow(ConfigError);
+  });
+
+  it("accepts cacheTtl of 5m or 1h, rejects other strings", () => {
+    writeFileSync(join(dir, "ttl-5m.toml"), 'cacheTtl = "5m"\n');
+    expect(loadAppConfig(env("ttl-5m.toml")).transport.cacheTtl).toBe("5m");
+
+    writeFileSync(join(dir, "ttl-1h.toml"), 'cacheTtl = "1h"\n');
+    expect(loadAppConfig(env("ttl-1h.toml")).transport.cacheTtl).toBe("1h");
+
+    writeFileSync(join(dir, "ttl-bad.toml"), 'cacheTtl = "1d"\n');
+    expect(() => loadAppConfig(env("ttl-bad.toml"))).toThrow(
+      /cacheTtl must be/,
+    );
   });
 });
 

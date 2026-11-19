@@ -11,6 +11,7 @@ import type {
   StreamResult,
   TransportConfig,
 } from "../transport/anthropic.js";
+import { applyCacheControl } from "./cache.js";
 import {
   pageToolResults,
   deduplicateReadResult,
@@ -56,9 +57,10 @@ const GENERAL_SYSTEM = [
 ].join("\n");
 
 function pickTools(registry: Registry, type: string): unknown[] {
-  // Subagents are ephemeral (no prompt caching), so progressive tool loading
-  // gives them no benefit and must not narrow their toolset. Build from every
-  // ALLOWED tool, ignoring the parent's active set.
+  // A subagent's tool set is fixed for its whole run (see the cache_control
+  // markers applied in the iteration loop below), so progressive tool
+  // loading gives it no benefit and must not narrow the toolset. Build from
+  // every ALLOWED tool, ignoring the parent's active set.
   const allowed = registry.defs
     .filter((d) => registry.isEnabled(d.name))
     .map((d) => ({
@@ -124,11 +126,7 @@ export async function runSubagent(
 
     const result = await stream(
       subConfig,
-      {
-        system: [{ type: "text", text: system }],
-        tools,
-        messages: view,
-      },
+      applyCacheControl(system, tools, view, subConfig.cacheTtl),
       onText ?? (() => {}),
       signal,
     );

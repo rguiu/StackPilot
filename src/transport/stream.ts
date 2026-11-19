@@ -43,6 +43,11 @@ export interface TransportConfig {
   // Thinking budget in tokens (extended thinking, Sonnet/Opus only).
   // Omit or set 0 for normal mode.
   thinkingBudgetTokens?: number;
+  // Prompt-cache TTL for every cache_control marker. Omit or "5m" keeps the
+  // provider default; "1h" requires the extended-cache-ttl beta header (see
+  // anthropic.ts) and costs more per cache write in exchange for a longer
+  // window between requests before the prefix has to be re-written.
+  cacheTtl?: "5m" | "1h";
   retry?: RetryConfig;
   // Which wire protocol to speak. Defaults to "anthropic" (Messages API + SSE).
   // "bedrock" targets /model/<id>/invoke-with-response-stream and parses the

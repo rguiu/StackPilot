@@ -68,6 +68,18 @@ describe("buildCompactRequest", () => {
     expect(block.text).toBe(COMPACT_INSTRUCTION);
     expect(block.cache_control).toEqual({ type: "ephemeral" });
   });
+
+  it("passes a ttl through to every cache_control marker", () => {
+    const req = buildCompactRequest(
+      "SYS",
+      [{ name: "Read" }],
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      "1h",
+    );
+    const last = req.messages[1]!;
+    const block = (last.content as Record<string, unknown>[])[0]!;
+    expect(block.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
 });
 
 describe("runCompact", () => {
@@ -148,5 +160,134 @@ describe("runCompact", () => {
       }),
     ).rejects.toThrow("no summary");
     expect(store.all()).toHaveLength(2);
+  });
+
+  it("passes config.cacheTtl through to the request", async () => {
+    const store = SessionStore.create("/fake", home);
+    seedConversation(store);
+    let captured: { system: unknown } | undefined;
+    await runCompact({
+      store,
+      registry: createRegistry(),
+      config: { ...config, cacheTtl: "1h" },
+      system: "SYS",
+      stream: async (_cfg, req) => {
+        captured = req;
+        return summaryResponse("SUMMARY");
+      },
+    });
+    const blocks = captured!.system as Record<string, unknown>[];
+    expect(blocks[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
+
+  it("contracts disused tools when toolContractionRounds is set", async () => {
+    const store = SessionStore.create("/fake", home);
+    seedConversation(store);
+    const registry = createRegistry();
+    registry.setActive(["Read"]);
+    registry.activate("Bash");
+
+    const first = await runCompact({
+      store,
+      registry,
+      config,
+      system: "SYS",
+      stream: async () => summaryResponse("SUMMARY 1"),
+      toolContractionRounds: 2,
+    });
+    expect(first!.contractedTools).toEqual([]); // still within grace period
+
+    seedConversation(store);
+    const second = await runCompact({
+      store,
+      registry,
+      config,
+      system: "SYS",
+      stream: async () => summaryResponse("SUMMARY 2"),
+      toolContractionRounds: 2,
+    });
+    expect(second!.contractedTools).toEqual(["Bash"]);
+    expect(registry.schemas().map((s) => s.name)).not.toContain("Bash");
+  });
+
+  it("does not contract when toolContractionRounds is unset", async () => {
+    const store = SessionStore.create("/fake", home);
+    seedConversation(store);
+    const registry = createRegistry();
+    registry.setActive(["Read"]);
+    registry.activate("Bash");
+    const result = await runCompact({
+      store,
+      registry,
+      config,
+      system: "SYS",
+      stream: async () => summaryResponse("SUMMARY"),
+    });
+    expect(result!.contractedTools).toEqual([]);
+    expect(registry.schemas().map((s) => s.name)).toContain("Bash");
+  });
+
+  it("compresses an over-cap summary with one follow-up call", async () => {
+    const store = SessionStore.create("/fake", home);
+    seedConversation(store);
+    let calls = 0;
+    const result = await runCompact({
+      store,
+      registry: createRegistry(),
+      config,
+      system: "SYS",
+      stream: async () => {
+        calls++;
+        if (calls === 1) return summaryResponse("x".repeat(100));
+        return summaryResponse("short summary");
+      },
+      compactSummaryMaxChars: 50,
+    });
+    expect(calls).toBe(2);
+    expect(result!.compressed).toBe(true);
+    expect(result!.summaryChars).toBeLessThanOrEqual(50);
+    const after = reduce(store.all());
+    expect(JSON.stringify(after.messages[0]!.content)).toContain(
+      "short summary",
+    );
+  });
+
+  it("hard-truncates when the compression call still exceeds the cap", async () => {
+    const store = SessionStore.create("/fake", home);
+    seedConversation(store);
+    let calls = 0;
+    const result = await runCompact({
+      store,
+      registry: createRegistry(),
+      config,
+      system: "SYS",
+      stream: async () => {
+        calls++;
+        return summaryResponse("x".repeat(100));
+      },
+      compactSummaryMaxChars: 50,
+    });
+    expect(calls).toBe(2);
+    expect(result!.compressed).toBe(true);
+    expect(result!.summaryChars).toBe(50);
+  });
+
+  it("makes no second call when compactSummaryMaxChars is 0", async () => {
+    const store = SessionStore.create("/fake", home);
+    seedConversation(store);
+    let calls = 0;
+    const result = await runCompact({
+      store,
+      registry: createRegistry(),
+      config,
+      system: "SYS",
+      stream: async () => {
+        calls++;
+        return summaryResponse("x".repeat(100));
+      },
+      compactSummaryMaxChars: 0,
+    });
+    expect(calls).toBe(1);
+    expect(result!.compressed).toBe(false);
   });
 });

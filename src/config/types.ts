@@ -18,6 +18,12 @@ export const DEFAULT_MAX_ITERATIONS = 200;
 // cheaper per-turn but should still be bounded. TODO: evaluate real-world
 // subagent session lengths to pick a better default.
 export const DEFAULT_SUBAGENT_MAX_ITERATIONS = 80;
+// Compaction "rounds" a progressively-activated tool can go unused before
+// contractDisused() deactivates it again. 0 disables contraction.
+export const DEFAULT_TOOL_CONTRACTION_ROUNDS = 3;
+// Hard cap (chars) on a compaction summary. Longer summaries get one
+// compression follow-up call, then a hard truncate as a fallback. 0 disables.
+export const DEFAULT_COMPACT_SUMMARY_MAX_CHARS = 6000;
 
 export interface ModelPricing {
   inputPerMTok: number;
@@ -49,4 +55,10 @@ export interface AppConfig {
   maxIterations: number;
   // Maximum iterations for subagent exploration. Default 80.
   subagentMaxIterations: number;
+  // Compaction rounds a progressively-activated tool can go unused before
+  // it's deactivated again. 0 disables contraction. Default 3.
+  toolContractionRounds: number;
+  // Hard cap (chars) on a compaction summary before compression/truncation
+  // kicks in. 0 disables. Default 6000.
+  compactSummaryMaxChars: number;
 }
